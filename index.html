@@ -12,7 +12,9 @@
   input{width:230px}
   #btn{font-size:22px;padding:18px 36px;border-radius:40px;background:#4f8cff;color:#fff;margin-top:16px}
   #btn.on{background:#e5484d}
-  #ping{background:#333;color:#fff;font-size:16px}
+  #muteMic,#muteVoice{background:#2a2a2a;color:#fff;font-size:16px}
+  #muteMic.off,#muteVoice.off{background:#7a2a2a}
+  #ping{background:#333;color:#fff;font-size:14px}
   #saveKey{background:#4f8cff;color:#fff;font-size:16px}
   #qr{display:inline-block;background:#fff;padding:12px;border-radius:12px;margin:12px}
   #qr:empty{display:none}
@@ -26,7 +28,7 @@
 </style>
 </head>
 <body>
-<h2>Talk <span style="font-size:14px;color:#3ddc84">v6 log</span></h2>
+<h2>Talk <span style="font-size:14px;color:#3ddc84">v7 mute + echo fix</span></h2>
 
 <div id="hostSetup">
   <div>I speak: <select id="me"></select></div>
@@ -47,8 +49,13 @@
 <p id="link"></p>
 
 <div id="talkBox" style="display:none">
-  <button id="ping">📡 Test link</button><br>
-  <button id="btn">🎤 Start conversation</button>
+  <div>Sound: <select id="outMode">
+    <option value="speaker">🔈 Loudspeaker</option>
+    <option value="phones">🎧 Earphones</option>
+  </select></div>
+  <button id="btn">🎤 Start conversation</button><br>
+  <button id="muteMic">🎙 Mic: ON</button>
+  <button id="muteVoice">🔊 Voice: ON</button>
   <div id="meterBox"><div id="meter"></div></div>
   <p id="dbg"></p>
   <p id="status"></p>
@@ -56,6 +63,7 @@
   <p id="out"></p>
   <p id="emo"></p>
   <p id="time" style="color:#888"></p>
+  <button id="ping">📡 Test link</button>
 </div>
 <div id="log"></div>
 
@@ -66,11 +74,18 @@ const MODEL = 'gemini-flash-lite-latest';
 const PAUSE_MS = 900, MIN_SPEECH_MS = 200, MAX_SEC = 15;
 const LANGS = ['English','Telugu','Hindi','Tamil','Japanese','Korean','Chinese','Spanish','French'];
 const $ = id => document.getElementById(id);
+const est = t => Math.min(12000, 1500 + (t||'').length*140);
+
+let holdUntil = 0, micMuted = false, voiceOn = true;
+let ctx=null, stream=null, proc=null, on=false, busy=false, speaking=false;
+let collecting=false, buf=[], pre=[], silenceMs=0, speechMs=0;
+let calibrating=false, calMs=0, calSum=0, calN=0, thr=0.012;
+let turnCounter=0;
 
 const logLines = [];
 function log(t){
   logLines.push(new Date().toLocaleTimeString().slice(0,8) + ' ' + t);
-  if(logLines.length > 12) logLines.shift();
+  if(logLines.length > 8) logLines.shift();
   $('log').textContent = logLines.join('\n');
 }
 
@@ -80,7 +95,7 @@ const isGuest = !!room;
 if(!room) room = Math.random().toString(36).slice(2,8);
 const myRole = isGuest ? 'guest' : 'host';
 const myId = Math.random().toString(36).slice(2,8);
-log('I am the ' + myRole + ', room ' + room);
+log('I am the ' + myRole);
 
 LANGS.forEach(l => { $('me').add(new Option(l,l)); $('their').add(new Option(l,l)); });
 $('me').value = 'English'; $('their').value = 'Japanese';
@@ -121,12 +136,15 @@ function connected(){
 const inbox = {};
 ch.on('broadcast', {event:'msg'}, ({payload}) => {
   if(payload.from === myId) return;
-  if(payload.type !== 'audio') log('got ' + payload.type);
+  if(payload.type !== 'audio' && payload.type !== 'hold') log('got ' + payload.type);
   try{
     if(payload.type === 'join' && !isGuest){ connected(); send({type:'welcome'}); }
     else if(payload.type === 'welcome' && isGuest){ connected(); }
     else if(payload.type === 'ping'){ send({type:'pong'}); }
     else if(payload.type === 'pong'){ log('✅ link works both ways'); }
+    else if(payload.type === 'hold'){
+      holdUntil = Math.max(holdUntil, performance.now() + payload.ms + 1000);
+    }
     else if(payload.type === 'audio' && !isGuest){
       const m = inbox[payload.id] || (inbox[payload.id] = {n:payload.n, parts:[], got:0});
       if(!m.parts[payload.i]){ m.parts[payload.i] = payload.data; m.got++; }
@@ -140,7 +158,7 @@ ch.on('broadcast', {event:'msg'}, ({payload}) => {
       showResult(payload);
       if(payload.speaker === 'host'){
         if(on) speak(payload.translation, payload.lang);
-        else log('result shown, but tap Start conversation to hear it');
+        else log('result shown, tap Start conversation to hear it');
       } else { turnCounter++; resumeListening(); }
     }
     else if(payload.type === 'error' && isGuest){
@@ -153,7 +171,6 @@ ch.on('broadcast', {event:'msg'}, ({payload}) => {
 
 ch.subscribe(s => {
   $('dbg').textContent = 'Relay: ' + s;
-  log('relay ' + s);
   if(s === 'SUBSCRIBED'){
     if(isGuest){
       $('conn').textContent = 'Connecting...';
@@ -171,6 +188,21 @@ ch.subscribe(s => {
 });
 
 $('ping').onclick = () => { log('sending test...'); send({type:'ping'}).then(r => log('test send: ' + r)); };
+
+/* ---------- mute buttons ---------- */
+$('muteMic').onclick = () => {
+  micMuted = !micMuted;
+  $('muteMic').textContent = micMuted ? '🎙 Mic: MUTED' : '🎙 Mic: ON';
+  $('muteMic').classList.toggle('off', micMuted);
+  if(micMuted){ collecting=false; buf=[]; pre=[]; speechMs=0; silenceMs=0; if(on) setStatus('🔇 Mic muted'); }
+  else if(on && !busy) setStatus('👂 Listening... just speak');
+};
+$('muteVoice').onclick = () => {
+  voiceOn = !voiceOn;
+  $('muteVoice').textContent = voiceOn ? '🔊 Voice: ON' : '🔊 Voice: OFF';
+  $('muteVoice').classList.toggle('off', !voiceOn);
+  if(!voiceOn) speechSynthesis.cancel();
+};
 
 /* ---------- audio helpers ---------- */
 function toWav16k(samples, srcRate){
@@ -191,12 +223,10 @@ function b64(buf){let s='';const b=new Uint8Array(buf);for(let i=0;i<b.length;i+
 
 async function sendAudio(data){
   const id = Math.random().toString(36).slice(2,8), SZ = 60000, n = Math.ceil(data.length/SZ);
-  log('sending audio in ' + n + ' part(s)');
   for(let i=0;i<n;i++){
     const r = await send({type:'audio', id, i, n, data:data.slice(i*SZ,(i+1)*SZ)});
     if(r !== 'ok') log('audio part ' + (i+1) + ' send: ' + r);
   }
-  log('audio sent');
 }
 
 /* ---------- translation (runs on the laptop / host only) ---------- */
@@ -230,12 +260,12 @@ async function handleAudio(data, speaker){
   const t0 = performance.now();
   try{
     const j = await translate(data, speaker);
-    if(speaker === 'guest') setTheirLang(j.detected_language);
+    if(speaker === 'guest' && j.detected_language !== $('me').value) setTheirLang(j.detected_language);
     const res = {type:'result', speaker, heard:j.heard, translation:j.translation,
                  lang:j.translation_lang_code, emotion:j.emotion, detected:j.detected_language};
     showResult(res);
     $('time').textContent = 'AI took ' + ((performance.now()-t0)/1000).toFixed(1) + ' seconds';
-    send(res).then(r => log('sent result to other device: ' + r));
+    send(res);
     if(speaker === 'guest'){ if(on) speak(j.translation, j.translation_lang_code); else busy = false; }
     else resumeListening();
   }catch(err){
@@ -253,24 +283,23 @@ function showResult(r){
 }
 
 function speak(text, lang){
+  if(!voiceOn){ resumeListening(); return; }
+  const loud = $('outMode').value === 'speaker';
   busy = true; speaking = true;
   setStatus('🔊 Speaking...');
+  if(loud) send({type:'hold', ms: est(text)});
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang || 'en-US';
-  u.onend = resumeListening;
-  u.onerror = e => { log('voice error: ' + (e.error||'unknown')); resumeListening(); };
+  const done = () => setTimeout(resumeListening, loud ? 700 : 100);
+  u.onend = done;
+  u.onerror = e => { log('voice error: ' + (e.error||'unknown')); done(); };
   speechSynthesis.speak(u);
 }
 
 /* ---------- microphone, hands-free ---------- */
-let ctx=null, stream=null, proc=null, on=false, busy=false, speaking=false;
-let collecting=false, buf=[], pre=[], silenceMs=0, speechMs=0;
-let calibrating=false, calMs=0, calSum=0, calN=0, thr=0.012;
-let turnCounter=0;
-
 function resumeListening(){
   collecting=false; buf=[]; pre=[]; silenceMs=0; speechMs=0; busy=false; speaking=false;
-  if(on) setStatus('👂 Listening... just speak');
+  if(on) setStatus(micMuted ? '🔇 Mic muted' : '👂 Listening... just speak');
 }
 
 async function finish(){
@@ -297,7 +326,7 @@ function onAudio(e){
   let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]*d[i];
   const rms = Math.sqrt(sum/d.length);
   const ms = d.length/ctx.sampleRate*1000;
-  $('meter').style.width = Math.min(100, (rms/(thr*2))*100) + '%';
+  $('meter').style.width = micMuted ? '0%' : Math.min(100, (rms/(thr*2))*100) + '%';
 
   if(calibrating){
     calSum += rms; calN++; calMs += ms;
@@ -307,6 +336,11 @@ function onAudio(e){
       thr = Math.min(0.02, Math.max(0.006, (calSum/calN)*2.5));
       resumeListening();
     }
+    return;
+  }
+  if(micMuted) return;
+  if(performance.now() < holdUntil){
+    collecting=false; buf=[]; pre=[]; speechMs=0; silenceMs=0;
     return;
   }
   if(busy) return;
