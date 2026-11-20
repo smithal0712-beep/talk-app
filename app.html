@@ -463,6 +463,31 @@ Reply JSON only: phrases (array of 6 objects with phrase, pronunciation, meaning
     $('lnOut').innerHTML='<div class="card"><div class="lbl2" style="margin-top:0">'+esc(c.dataset.s)+'</div>'+(j.phrases||[]).map(x=>'<div class="ver"><span><b>'+esc(x.phrase)+'</b><br><span class="small">'+esc(x.pronunciation)+' · '+esc(x.meaning)+'</span></span>'+spBtn(x.phrase,lc)+'</div>').join('')+'</div>';
   }catch(err){$('lnOut').innerHTML='';$('lnErr').textContent='Error: '+err.message;}
 };
+async function gem(parts,model){
+  if(!gkey){showKeyCard(true);throw new Error('Add your Google AI key first');}
+  const order=model===MODEL_AUDIO?[MODEL_AUDIO,'gemini-flash-latest']:['gemini-flash-lite-latest','gemini-flash-latest'];
+  let lastErr='Unknown error';
+  for(const m of order){
+    for(let t=0;t<2;t++){
+      try{
+        const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+gkey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}],generationConfig:{responseMimeType:'application/json'}})});
+        const d=await r.json();
+        if(!d.candidates||!d.candidates[0]||!d.candidates[0].content){
+          lastErr=(d.error&&d.error.message)||JSON.stringify(d).slice(0,200);
+          if(r.status===429||r.status===503){await new Promise(z=>setTimeout(z,1500));continue;}
+          break;
+        }
+        let txt=d.candidates[0].content.parts.filter(p=>p.text&&!p.thought).map(p=>p.text).join('').replace(/```json|```/g,'');
+        let j;
+        try{j=JSON.parse(txt.trim());}
+        catch(e){const a=txt.indexOf('{'),b=txt.lastIndexOf('}');j=JSON.parse(txt.slice(a,b+1));}
+        if(Array.isArray(j))j=j[0];
+        return j;
+      }catch(e){lastErr=e.message;}
+    }
+  }
+  throw new Error(lastErr);
+}
 </script>
 </body>
 </html>
