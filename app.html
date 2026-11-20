@@ -61,9 +61,10 @@ option{color:#111}
 .off{background:rgba(255,93,115,.25)!important}
 .big{font-size:24px;font-weight:600;line-height:1.35;margin:4px 0}
 .ver{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:15px}
-.ver span:last-child{flex:1}
-.tagk{font-size:11px;padding:3px 9px;border-radius:99px;background:rgba(245,192,74,.14);color:var(--warn);white-space:nowrap}
-.sp{padding:6px 9px;font-size:14px}
+.ver>span:first-child{flex:1}
+.ver>span:last-child:not(:first-child){flex:1}
+.tagk{font-size:11px;padding:3px 9px;border-radius:99px;background:rgba(245,192,74,.14);color:var(--warn);white-space:nowrap;flex:none!important}
+.sp{padding:6px 9px;font-size:14px;flex:none}
 .err{color:#ff8a8a;font-size:13px;margin-top:8px;word-break:break-word}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:6px;padding:8px 12px calc(env(safe-area-inset-bottom) + 8px);background:rgba(11,16,32,.85);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--line)}
 nav button{flex:1;max-width:150px;padding:10px 6px;border:0;background:transparent;color:var(--mut);font-size:12px;border-radius:14px}
@@ -74,7 +75,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,rgba(108,140,255,.35)
 <div class="wrap">
 <header>
   <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 11v2M8 7v10M12 3v18M16 7v10M20 11v2"/></svg></div>
-  <div><h1>Talk</h1><div class="tag">Understands people, not just words</div></div>
+  <div><h1>Talk</h1><div class="tag">Understands people, not just words · v12.2</div></div>
   <button id="keyBtn">🔑</button>
 </header>
 
@@ -142,8 +143,8 @@ nav button.on{color:#fff;background:linear-gradient(135deg,rgba(108,140,255,.35)
 </nav>
 
 <script>
-const MODEL_AUDIO='gemini-flash-lite-latest', MODEL_TEXT='gemini-flash-latest';
-const PAUSE_MS=900,MIN_SPEECH_MS=200,MAX_SEC=15;
+const ORDER=['gemini-flash-lite-latest','gemini-flash-latest'];
+const PAUSE_MS=900,MIN_MS=450,MAX_SEC=15,TAIL_MS=1100;
 const CODES={Telugu:'te-IN',Hindi:'hi-IN',Tamil:'ta-IN',Kannada:'kn-IN',Malayalam:'ml-IN',Urdu:'ur-PK',Bengali:'bn-IN',Marathi:'mr-IN',Gujarati:'gu-IN',Punjabi:'pa-IN',Odia:'or-IN',Assamese:'as-IN',Kashmiri:'ks-IN',Konkani:'kok-IN',Sanskrit:'sa-IN',Nepali:'ne-NP',Sindhi:'sd-IN',Dogri:'doi-IN',Maithili:'mai-IN',Manipuri:'mni-IN',Santali:'sat-IN',English:'en-US',Japanese:'ja-JP',Chinese:'zh-CN',Arabic:'ar-SA',French:'fr-FR',Spanish:'es-ES',German:'de-DE',Portuguese:'pt-BR',Russian:'ru-RU',Korean:'ko-KR',Indonesian:'id-ID',Thai:'th-TH',Vietnamese:'vi-VN',Turkish:'tr-TR',Italian:'it-IT',Persian:'fa-IR',Burmese:'my-MM',Filipino:'fil-PH',Hebrew:'he-IL',Khmer:'km-KH',Sinhala:'si-LK',Ukrainian:'uk-UA',Dutch:'nl-NL',Swahili:'sw-KE'};
 const LANGS=Object.keys(CODES);
 const PREFIX={te:'Telugu',hi:'Hindi',ta:'Tamil',kn:'Kannada',ml:'Malayalam',ur:'Urdu',bn:'Bengali',mr:'Marathi',gu:'Gujarati',pa:'Punjabi',or:'Odia',as:'Assamese',ks:'Kashmiri',sa:'Sanskrit',ne:'Nepali',sd:'Sindhi',en:'English',ja:'Japanese',zh:'Chinese',ar:'Arabic',fr:'French',es:'Spanish',de:'German',pt:'Portuguese',ru:'Russian',ko:'Korean',id:'Indonesian',th:'Thai',vi:'Vietnamese',tr:'Turkish',it:'Italian',fa:'Persian',my:'Burmese',tl:'Filipino',he:'Hebrew',km:'Khmer',si:'Sinhala',uk:'Ukrainian',nl:'Dutch',sw:'Swahili'};
@@ -169,6 +170,10 @@ let myList=store.get('myList',[hintName()||'English']);
 let primary=store.get('primary',myList[0]);
 let theirLang=store.get('theirLang','Japanese');
 let micMuted=false,voiceOn=true,history=[],votes={me:{male:0,female:0},they:{male:0,female:0}};
+let ctx=null,stream=null,proc=null,on=false,busy=false,restarting=false;
+let collecting=false,buf=[],pre=[],silenceMs=0,speechMs=0,peak=0;
+let calibrating=false,calMs=0,calSum=0,calN=0,thr=0.012;
+let watchT=null,lastAudio=0,quietUntil=0;
 try{speechSynthesis.getVoices();speechSynthesis.onvoiceschanged=()=>{};}catch(e){}
 
 /* ---------- key ---------- */
@@ -183,15 +188,36 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   ['talk','tr','learn'].forEach(t=>$('tab-'+t).hidden=(t!==b.dataset.tab));
 });
 
-/* ---------- Gemini ---------- */
-async function gem(parts,model){
-  if(!gkey){showKeyCard(true);throw new Error('Add your Google AI key first');}
-  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+gkey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}],generationConfig:{responseMimeType:'application/json'}})});
-  const d=await r.json();
-  if(!d.candidates)throw new Error(JSON.stringify(d.error||d));
-  let j=JSON.parse(d.candidates[0].content.parts[0].text);
-  if(Array.isArray(j))j=j[0];
-  return j;
+/* ---------- Gemini: timeout, retry, fallback model ---------- */
+async function gem(parts,kind){
+  if(!gkey){showKeyCard(true);throw new Error('Add your Google AI key first (tap the key icon)');}
+  const limit=kind==='audio'?15000:25000;
+  let lastErr='Unknown error';
+  for(const m of ORDER){
+    for(let t=0;t<2;t++){
+      const ac=new AbortController();
+      const to=setTimeout(()=>ac.abort(),limit);
+      let retry=false;
+      try{
+        const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+gkey,{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}],generationConfig:{responseMimeType:'application/json'}})});
+        const d=await r.json();
+        clearTimeout(to);
+        if(!d.candidates||!d.candidates[0]||!d.candidates[0].content){
+          lastErr=(d.error&&d.error.message)||JSON.stringify(d).slice(0,200);
+          retry=(r.status===429||r.status===503);
+        }else{
+          const txt=d.candidates[0].content.parts.filter(p=>p.text&&!p.thought).map(p=>p.text).join('').replace(/```json|```/g,'').trim();
+          let j;
+          try{j=JSON.parse(txt);}catch(e){j=JSON.parse(txt.slice(txt.indexOf('{'),txt.lastIndexOf('}')+1));}
+          return Array.isArray(j)?j[0]:j;
+        }
+      }catch(e){clearTimeout(to);lastErr=e.name==='AbortError'?'The AI took too long':e.message;}
+      if(!retry)break;
+      await new Promise(z=>setTimeout(z,1500));
+    }
+  }
+  if(/quota|exhaust|429|rate/i.test(lastErr))lastErr='Free AI limit reached for now. Wait a minute and try again.';
+  throw new Error(lastErr);
 }
 
 /* ---------- voice helpers ---------- */
@@ -203,18 +229,18 @@ function pickVoice(lang,gender){
   let v=null;
   if(gender==='male')v=sl.find(x=>has(x,MALE));
   if(gender==='female')v=sl.find(x=>has(x,FEMALE));
-  return {voice:v||sl.find(x=>x.default)||sl[0]||null,matched:!!v,listLoaded:vs.length>0};
+  return {voice:v||sl.find(x=>x.default)||sl[0]||null,matched:!!v};
 }
 function say(text,lang){
   try{speechSynthesis.cancel();}catch(e){}
   const u=new SpeechSynthesisUtterance(text);u.lang=lang||'en-US';
   const p=pickVoice(u.lang,'');if(p.voice){u.voice=p.voice;u.lang=p.voice.lang||u.lang;}
-  speechSynthesis.speak(u);
+  setTimeout(()=>{try{speechSynthesis.resume();speechSynthesis.speak(u);}catch(e){}},120);
 }
 document.addEventListener('click',e=>{const b=e.target.closest('.sp');if(b)say(b.dataset.t,b.dataset.l);});
 
 /* =====================  TALK  ===================== */
-LANGS.forEach(l=>{$('theirSel').add(new Option(l,l));});
+LANGS.forEach(l=>$('theirSel').add(new Option(l,l)));
 $('addLang').add(new Option('＋ Add',''));LANGS.forEach(l=>$('addLang').add(new Option(l,l)));
 function setTheir(l){if(!l)return;const s=$('theirSel');if(![...s.options].some(o=>o.value===l))s.add(new Option(l,l));s.value=l;theirLang=l;store.set('theirLang',l);}
 setTheir(theirLang);
@@ -232,9 +258,18 @@ $('addLang').onchange=()=>{const v=$('addLang').value;if(v&&!inList(v,myList)){m
 renderChips();
 
 const setStatus=t=>{$('status').textContent=t;};
-let ctx=null,stream=null,proc=null,on=false,busy=false;
-let collecting=false,buf=[],pre=[],silenceMs=0,speechMs=0;
-let calibrating=false,calMs=0,calSum=0,calN=0,thr=0.012;
+
+function watch(ms,msg){
+  clearTimeout(watchT);
+  watchT=setTimeout(()=>{if(on&&busy){setStatus(msg||'⏱ Took too long, listening again');resume();}},ms);
+}
+function errBubble(m){
+  const d=document.createElement('div');d.className='bub they';
+  d.innerHTML='<div class="tg" style="color:#ff8a8a"></div>';
+  d.firstChild.textContent='⚠ '+m;
+  $('chat').appendChild(d);
+  d.scrollIntoView({behavior:'smooth',block:'end'});
+}
 
 function talkPrompt(){
   const talk=history.map(h=>(h.me?'ME':'THEM')+': '+h.heard).join('\n')||'(this is the start)';
@@ -243,7 +278,8 @@ ME speaks: ${myList.join(' / ')} (may mix them in one sentence). THEM speaks: ${
 Listen and detect the main language of the audio.
 - If it is one of ME's languages: translate into ${theirLang}.
 - Otherwise: translate into ${primary}.
-- If the audio is silence or noise, set accepted to false and leave the other fields empty.
+- If the audio is silence, noise, or unclear, set accepted to false and leave the other fields empty.
+- If the audio is a robotic or synthetic voice, or repeats a translation that was just spoken (an echo of the phone's own speaker), set accepted to false.
 
 Rules:
 1. Translate the meaning and intent, not word for word. Slang, idioms, jokes and sarcasm must come out as what they mean in this situation. Example: "You are killing it, brother" is praise, never anything about killing. Use the conversation so far to understand what words refer to.
@@ -269,16 +305,23 @@ function addBubble(me,j,secs){
   d.scrollIntoView({behavior:'smooth',block:'end'});
 }
 
+function resume(tail){
+  clearTimeout(watchT);
+  collecting=false;buf=[];pre=[];silenceMs=0;speechMs=0;peak=0;busy=false;
+  quietUntil=performance.now()+(typeof tail==='number'?tail:500);
+  try{if(ctx&&ctx.state!=='running')ctx.resume();}catch(e){}
+  if(on)setStatus(micMuted?'🔇 Mic muted':'👂 Listening... just speak');
+}
+
 async function handle(data){
-  busy=true;setStatus('Thinking...');
+  busy=true;setStatus('Thinking...');watch(45000,'⏱ No answer, listening again');
   const t0=performance.now();
   try{
-    const j=await gem([{text:talkPrompt()},{inline_data:{mime_type:'audio/wav',data:data}}],MODEL_AUDIO);
+    const j=await gem([{text:talkPrompt()},{inline_data:{mime_type:'audio/wav',data:data}}],'audio');
     const det=canon(j.detected_language);
     const ok=(j.accepted===true||j.accepted==='true')&&!!det&&!!String(j.translation||'').trim();
-    if(!ok){setStatus('🚫 Did not catch clear speech');setTimeout(resume,1500);return;}
-    const me=inList(det,myList);
-    const sp=me?'me':'they';
+    if(!ok){setStatus('🚫 Did not catch clear speech');setTimeout(()=>resume(),1000);return;}
+    const me=inList(det,myList),sp=me?'me':'they';
     if(me){primary=myList.find(l=>same(l,det))||primary;store.set('primary',primary);renderChips();}
     else setTheir(det);
     const g=String(j.speaker_gender||'').toLowerCase();
@@ -290,28 +333,43 @@ async function handle(data){
     addBubble(me,{det,heard:j.heard,translation:j.translation,emotion:j.emotion,register:j.register,relationship:j.relationship},secs);
     const into=canon(j.translated_into);
     speakTalk(j.translation,CODES[into]||j.translation_lang_code||'en-US',{gender,energy:String(j.energy||'medium').toLowerCase()});
-  }catch(err){setStatus('Error: '+err.message);setTimeout(resume,3000);}
+  }catch(err){
+    errBubble(String(err.message||err).slice(0,200));
+    setStatus('Error, listening again');
+    setTimeout(()=>resume(),1500);
+  }
 }
 
 function speakTalk(text,lang,info){
   if(!voiceOn){resume();return;}
+  const synth=window.speechSynthesis;
+  let finished=false,started=false,guard=null,startGuard=null;
+  const end=()=>{if(finished)return;finished=true;clearTimeout(guard);clearTimeout(startGuard);resume(TAIL_MS);};
+  const wide=/[\u3040-\u30ff\u4e00-\u9fff\u0e00-\u0e7f\uac00-\ud7af]/.test(text);
+  const estMs=1800+String(text).length*(wide?260:110);
+  watch(Math.min(35000,estMs+8000),'⏱ Voice stuck, listening again');
+  guard=setTimeout(()=>{try{synth.cancel();}catch(e){}end();},Math.min(25000,estMs+4000));
+  startGuard=setTimeout(()=>{
+    if(!started){errBubble('The voice did not start (text only). Check the silent switch and volume.');try{synth.cancel();}catch(e){}end();}
+  },3500);
   const pick=pickVoice(lang,info.gender);
-  if(pick.listLoaded&&!pick.voice){setStatus('📝 No voice for this language on this phone, text only');setTimeout(resume,1800);return;}
-  setStatus('🔊 Speaking...');
-  const u=new SpeechSynthesisUtterance(text);u.lang=lang;
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=lang;
   if(pick.voice){u.voice=pick.voice;u.lang=pick.voice.lang||lang;}
   let pitch=1,rate=1;
-  if(info.gender&&!pick.matched)pitch=info.gender==='male'?0.8:1.15;
-  if(info.energy==='high'){rate=1.08;pitch+=0.08;}else if(info.energy==='low'){rate=0.92;pitch-=0.08;}
-  u.pitch=Math.max(0.5,Math.min(1.8,pitch));u.rate=rate;
-  const done=()=>setTimeout(resume,700);
-  u.onend=done;u.onerror=done;
-  speechSynthesis.speak(u);
-}
-
-function resume(){
-  collecting=false;buf=[];pre=[];silenceMs=0;speechMs=0;busy=false;
-  if(on)setStatus(micMuted?'🔇 Mic muted':'👂 Listening... just speak');
+  if(info.gender&&!pick.matched)pitch=info.gender==='male'?0.85:1.1;
+  if(info.energy==='high')rate=1.05;else if(info.energy==='low')rate=0.95;
+  u.pitch=pitch;u.rate=rate;
+  u.onstart=()=>{started=true;clearTimeout(startGuard);};
+  u.onend=end;
+  u.onerror=ev=>{
+    const er=ev&&ev.error;
+    if(er&&er!=='interrupted'&&er!=='canceled')errBubble('Voice error: '+er);
+    end();
+  };
+  setStatus('🔊 Speaking...');
+  try{synth.cancel();synth.resume();}catch(e){}
+  setTimeout(()=>{try{synth.speak(u);}catch(e){end();}},120);
 }
 
 function toWav16k(samples,srcRate){
@@ -328,10 +386,10 @@ function toWav16k(samples,srcRate){
 function b64(buf){let s='';const b=new Uint8Array(buf);for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s);}
 
 async function finish(){
-  const tooShort=speechMs<MIN_SPEECH_MS;
-  const chunks=buf;collecting=false;buf=[];pre=[];silenceMs=0;
-  if(tooShort){speechMs=0;if(on)setStatus('👂 Listening... just speak');return;}
-  speechMs=0;busy=true;setStatus('Thinking...');
+  const weak=speechMs<MIN_MS||peak<thr*1.8;
+  const chunks=buf;collecting=false;buf=[];pre=[];silenceMs=0;speechMs=0;peak=0;
+  if(weak){if(on)setStatus('👂 Listening... just speak');return;}
+  busy=true;setStatus('Thinking...');
   let len=0;chunks.forEach(c=>len+=c.length);
   const all=new Float32Array(len);let p=0;
   chunks.forEach(c=>{all.set(c,p);p+=c.length;});
@@ -339,6 +397,7 @@ async function finish(){
 }
 
 function onAudio(e){
+  lastAudio=performance.now();
   const d=new Float32Array(e.inputBuffer.getChannelData(0));
   let sum=0;for(let i=0;i<d.length;i++)sum+=d[i]*d[i];
   const rms=Math.sqrt(sum/d.length),ms=d.length/ctx.sampleRate*1000;
@@ -346,14 +405,16 @@ function onAudio(e){
   if(calibrating){
     calSum+=rms;calN++;calMs+=ms;
     setStatus('🤫 Stay quiet for 1 second...');
-    if(calMs>=1000){calibrating=false;thr=Math.min(0.02,Math.max(0.006,(calSum/calN)*2.5));resume();}
+    if(calMs>=1000){calibrating=false;thr=Math.min(0.02,Math.max(0.006,(calSum/calN)*2.5));resume(0);}
     return;
   }
   if(micMuted||busy)return;
+  if(performance.now()<quietUntil){collecting=false;buf=[];pre=[];speechMs=0;silenceMs=0;peak=0;return;}
   const loud=collecting?(rms>thr*0.5):(rms>thr);
   if(loud){
-    if(!collecting){collecting=true;buf=[...pre];pre=[];setStatus('🎙 Hearing you...');}
+    if(!collecting){collecting=true;buf=[...pre];pre=[];peak=0;setStatus('🎙 Hearing you...');}
     speechMs+=ms;silenceMs=0;buf.push(d);
+    if(rms>peak)peak=rms;
   }else if(collecting){
     buf.push(d);silenceMs+=ms;
     if(silenceMs>PAUSE_MS)finish();
@@ -361,23 +422,48 @@ function onAudio(e){
   if(collecting&&buf.length*d.length/ctx.sampleRate>MAX_SEC)finish();
 }
 
+async function openMic(){
+  stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  await ctx.resume();
+  const src=ctx.createMediaStreamSource(stream);
+  proc=ctx.createScriptProcessor(4096,1,1);
+  proc.onaudioprocess=onAudio;
+  src.connect(proc);proc.connect(ctx.destination);
+  lastAudio=performance.now();
+}
+async function restartMic(){
+  if(restarting)return;
+  restarting=true;
+  try{
+    setStatus('🔄 Restarting microphone...');
+    try{proc&&proc.disconnect();}catch(e){}
+    try{stream&&stream.getTracks().forEach(t=>t.stop());}catch(e){}
+    try{ctx&&ctx.close();}catch(e){}
+    await openMic();
+    resume();
+  }catch(e){errBubble('Microphone stopped: '+e.message+'. Tap Stop, then Start again.');}
+  restarting=false;
+}
+setInterval(()=>{
+  if(!on||!ctx)return;
+  try{if(ctx.state!=='running')ctx.resume();}catch(e){}
+  if(!busy&&!calibrating&&lastAudio>0&&performance.now()-lastAudio>6000)restartMic();
+},3000);
+
 $('btn').onclick=async()=>{
   try{
     if(!on){
       if(!gkey){showKeyCard(true);setStatus('Add your Google AI key first');return;}
       try{const u0=new SpeechSynthesisUtterance('.');u0.volume=0;speechSynthesis.speak(u0);}catch(e){}
-      stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      ctx=new (window.AudioContext||window.webkitAudioContext)();
-      await ctx.resume();
-      const src=ctx.createMediaStreamSource(stream);
-      proc=ctx.createScriptProcessor(4096,1,1);
-      proc.onaudioprocess=onAudio;
-      src.connect(proc);proc.connect(ctx.destination);
+      await openMic();
       on=true;$('btn').textContent='⏹ Stop conversation';$('btn').classList.add('on');
       calibrating=true;calMs=0;calSum=0;calN=0;busy=false;
     }else{
-      on=false;busy=false;calibrating=false;
-      proc.disconnect();stream.getTracks().forEach(t=>t.stop());ctx.close();
+      on=false;busy=false;calibrating=false;clearTimeout(watchT);
+      try{proc.disconnect();}catch(e){}
+      try{stream.getTracks().forEach(t=>t.stop());}catch(e){}
+      try{ctx.close();}catch(e){}
       speechSynthesis.cancel();
       $('btn').textContent='🎤 Start conversation';$('btn').classList.remove('on');
       setStatus('');$('meter').style.width='0';
@@ -412,7 +498,7 @@ $('trGo').onclick=async()=>{
 Reply JSON only: detected_language, translation, translation_lang_code (BCP-47), pronunciation (romanization if ${to} uses a non-Latin script, otherwise empty), versions (object with casual, polite, formal: the same meaning in each tone, in ${to}), notes (2 or 3 short English sentences about wording choices, nuance, and when to use each tone).
 Text:
 """${text}"""`;
-    const j=await gem([{text:prompt}],MODEL_TEXT);
+    const j=await gem([{text:prompt}],'text');
     trLast={t:j.translation||'',l:CODES[to]||j.translation_lang_code||'en-US'};
     $('trOut').hidden=false;
     $('trMain').textContent=trLast.t;
@@ -442,7 +528,7 @@ $('lnGo').onclick=async()=>{
   try{
     const prompt=`Teach a ${native} speaker how to say this in ${target}. Write explanations in ${native}. Phrase: "${text}"
 Reply JSON only: phrase (in ${target}, natural and polite by default), pronunciation (romanization), meaning (in ${native}), casual_version (in ${target}), breakdown (array of objects with word, reading, meaning), when_to_use (1 or 2 sentences in ${native} about the situations and politeness level), examples (array of 2 objects with text, pronunciation, meaning).`;
-    const j=await gem([{text:prompt}],MODEL_TEXT);
+    const j=await gem([{text:prompt}],'text');
     $('lnOut').innerHTML='<div class="card"><div class="big">'+esc(j.phrase)+'</div><div class="small">'+esc(j.pronunciation)+'</div><div class="small2">'+esc(j.meaning)+'</div><div style="margin-top:8px">'+spBtn(j.phrase,lc)+'</div>'
       +(j.casual_version?'<div class="lbl2">Casual</div><div class="ver"><span>'+esc(j.casual_version)+'</span>'+spBtn(j.casual_version,lc)+'</div>':'')
       +'<div class="lbl2">Word by word</div>'+(j.breakdown||[]).map(b=>'<div class="ver"><span class="tagk">'+esc(b.word)+'</span><span>'+esc(b.reading||'')+' · '+esc(b.meaning)+'</span></div>').join('')
@@ -459,35 +545,10 @@ $('lnSits').onclick=async e=>{
   try{
     const prompt=`A ${native} speaker living in a ${target}-speaking country needs useful phrases for this situation: ${c.dataset.s}. Give 6 short, practical phrases in ${target}, polite by default, that they would actually say or need to understand. Write meanings in ${native}.
 Reply JSON only: phrases (array of 6 objects with phrase, pronunciation, meaning).`;
-    const j=await gem([{text:prompt}],MODEL_TEXT);
+    const j=await gem([{text:prompt}],'text');
     $('lnOut').innerHTML='<div class="card"><div class="lbl2" style="margin-top:0">'+esc(c.dataset.s)+'</div>'+(j.phrases||[]).map(x=>'<div class="ver"><span><b>'+esc(x.phrase)+'</b><br><span class="small">'+esc(x.pronunciation)+' · '+esc(x.meaning)+'</span></span>'+spBtn(x.phrase,lc)+'</div>').join('')+'</div>';
   }catch(err){$('lnOut').innerHTML='';$('lnErr').textContent='Error: '+err.message;}
 };
-async function gem(parts,model){
-  if(!gkey){showKeyCard(true);throw new Error('Add your Google AI key first');}
-  const order=model===MODEL_AUDIO?[MODEL_AUDIO,'gemini-flash-latest']:['gemini-flash-lite-latest','gemini-flash-latest'];
-  let lastErr='Unknown error';
-  for(const m of order){
-    for(let t=0;t<2;t++){
-      try{
-        const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+gkey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}],generationConfig:{responseMimeType:'application/json'}})});
-        const d=await r.json();
-        if(!d.candidates||!d.candidates[0]||!d.candidates[0].content){
-          lastErr=(d.error&&d.error.message)||JSON.stringify(d).slice(0,200);
-          if(r.status===429||r.status===503){await new Promise(z=>setTimeout(z,1500));continue;}
-          break;
-        }
-        let txt=d.candidates[0].content.parts.filter(p=>p.text&&!p.thought).map(p=>p.text).join('').replace(/```json|```/g,'');
-        let j;
-        try{j=JSON.parse(txt.trim());}
-        catch(e){const a=txt.indexOf('{'),b=txt.lastIndexOf('}');j=JSON.parse(txt.slice(a,b+1));}
-        if(Array.isArray(j))j=j[0];
-        return j;
-      }catch(e){lastErr=e.message;}
-    }
-  }
-  throw new Error(lastErr);
-}
 </script>
 </body>
 </html>
