@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connect</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   body{font-family:sans-serif;text-align:center;padding:24px;background:#111;color:#fff}
@@ -18,7 +18,7 @@
 </style>
 </head>
 <body>
-<h2>Connect <span style="font-size:14px;color:#3ddc84">v2 relay</span></h2>
+<h2>Connect <span style="font-size:14px;color:#3ddc84">v3 supabase</span></h2>
 <div id="status">Starting...</div>
 <div id="qr"></div>
 <p id="link"></p>
@@ -27,66 +27,64 @@
 <p id="dbg"></p>
 
 <script>
-const params = new URLSearchParams(location.search);
-const joinId = params.get('join');
-const status = document.getElementById('status'), log = document.getElementById('log'), dbg = document.getElementById('dbg');
-let conn = null, isConnected = false;
+const SUPABASE_URL = 'https://jxtrjjsnyoyrvktjebbx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_MKpbfMzNoDUJc1iwXUA0fw_yHhZxKH3';
 
-function connected(c){
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const params = new URLSearchParams(location.search);
+let room = params.get('room');
+const isGuest = !!room;
+if(!room) room = Math.random().toString(36).slice(2,8);
+const me = Math.random().toString(36).slice(2,8);
+
+const status = document.getElementById('status'), log = document.getElementById('log'), dbg = document.getElementById('dbg');
+let isConnected = false;
+
+const ch = sb.channel('room-' + room, {config:{broadcast:{self:false}}});
+
+function send(payload){ ch.send({type:'broadcast', event:'msg', payload:Object.assign({from:me}, payload)}); }
+
+function connected(){
   if(isConnected) return;
   isConnected = true;
-  conn = c;
   status.textContent = '✅ Connected!';
   document.getElementById('qr').innerHTML = '';
   document.getElementById('link').textContent = '';
   document.getElementById('hi').style.display = 'inline-block';
   try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
-  c.on('data', d => {
-    log.textContent = 'Received: ' + d;
-    try{ navigator.vibrate && navigator.vibrate(100); }catch(e){}
-  });
-  c.on('close', () => { status.textContent = 'Disconnected'; });
 }
 
-const peer = new Peer({
-  config: {
-    iceServers: [
-      {urls:'stun:stun.l.google.com:19302'},
-      {urls:'stun:openrelay.metered.ca:80'},
-      {urls:'turn:openrelay.metered.ca:80', username:'openrelayproject', credential:'openrelayproject'},
-      {urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject'},
-      {urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject'}
-    ]
+ch.on('broadcast', {event:'msg'}, ({payload}) => {
+  if(payload.from === me) return;
+  if(payload.type === 'join' && !isGuest){ connected(); send({type:'welcome'}); }
+  else if(payload.type === 'welcome' && isGuest){ connected(); }
+  else if(payload.type === 'hello'){
+    log.textContent = 'Received: ' + payload.text;
+    try{ navigator.vibrate && navigator.vibrate(100); }catch(e){}
   }
 });
 
-peer.on('error', e => { status.textContent = 'Error: ' + e.type; });
-peer.on('open', id => {
-  if(joinId){
-    status.textContent = 'Connecting...';
-    const c = peer.connect(joinId, {reliable:true});
-    c.on('open', () => connected(c));
-    c.on('error', e => { dbg.textContent = 'Conn error: ' + e; });
-    let secs = 0;
-    const t = setInterval(() => {
-      secs++;
-      const pc = c.peerConnection;
-      dbg.textContent = 'Waited ' + secs + 's | network state: ' + (pc ? pc.iceConnectionState : 'none');
-      if(isConnected) { clearInterval(t); dbg.textContent=''; }
-      if(secs === 20 && !isConnected) status.textContent = 'Still trying... network may be blocking';
-    }, 1000);
-  } else {
-    status.textContent = "Scan this with your friend's phone camera";
-    const url = location.origin + location.pathname + '?join=' + id;
-    new QRCode(document.getElementById('qr'), {text: url, width: 220, height: 220});
-    document.getElementById('link').textContent = url;
+ch.subscribe(s => {
+  dbg.textContent = 'Relay: ' + s;
+  if(s === 'SUBSCRIBED'){
+    if(isGuest){
+      status.textContent = 'Connecting...';
+      send({type:'join'});
+      setTimeout(() => { if(!isConnected) status.textContent = 'Still trying... is the other page open?'; }, 8000);
+    } else {
+      status.textContent = "Scan this with your friend's phone camera";
+      const url = location.origin + location.pathname + '?room=' + room;
+      new QRCode(document.getElementById('qr'), {text:url, width:220, height:220});
+      document.getElementById('link').textContent = url;
+    }
+  } else if(s === 'CHANNEL_ERROR' || s === 'TIMED_OUT'){
+    status.textContent = 'Error: could not reach the relay (' + s + ')';
   }
 });
-peer.on('connection', c => c.on('open', () => connected(c)));
 
 document.getElementById('hi').onclick = () => {
-  if(conn) conn.send('Hello 👋 from ' + (joinId ? 'guest' : 'host'));
+  send({type:'hello', text:'Hello 👋 from ' + (isGuest ? 'guest' : 'host')});
 };
 </script>
 </body>
-</html>s
+</html>
