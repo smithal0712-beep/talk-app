@@ -14,23 +14,27 @@
   #status{font-size:22px;margin:12px 0}
   #link{font-size:12px;color:#888;word-break:break-all}
   #log{font-size:20px}
+  #dbg{font-size:14px;color:#aaa}
 </style>
 </head>
 <body>
-<h2>Connect <span style="font-size:14px;color:#3ddc84">v1</span></h2>
+<h2>Connect <span style="font-size:14px;color:#3ddc84">v2 relay</span></h2>
 <div id="status">Starting...</div>
 <div id="qr"></div>
 <p id="link"></p>
 <button id="hi" style="display:none">👋 Send hello</button>
 <p id="log"></p>
+<p id="dbg"></p>
 
 <script>
 const params = new URLSearchParams(location.search);
 const joinId = params.get('join');
-const status = document.getElementById('status'), log = document.getElementById('log');
-let conn = null;
+const status = document.getElementById('status'), log = document.getElementById('log'), dbg = document.getElementById('dbg');
+let conn = null, isConnected = false;
 
 function connected(c){
+  if(isConnected) return;
+  isConnected = true;
   conn = c;
   status.textContent = '✅ Connected!';
   document.getElementById('qr').innerHTML = '';
@@ -44,13 +48,33 @@ function connected(c){
   c.on('close', () => { status.textContent = 'Disconnected'; });
 }
 
-const peer = new Peer();
+const peer = new Peer({
+  config: {
+    iceServers: [
+      {urls:'stun:stun.l.google.com:19302'},
+      {urls:'stun:openrelay.metered.ca:80'},
+      {urls:'turn:openrelay.metered.ca:80', username:'openrelayproject', credential:'openrelayproject'},
+      {urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject'},
+      {urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject'}
+    ]
+  }
+});
+
 peer.on('error', e => { status.textContent = 'Error: ' + e.type; });
 peer.on('open', id => {
   if(joinId){
     status.textContent = 'Connecting...';
-    const c = peer.connect(joinId);
+    const c = peer.connect(joinId, {reliable:true});
     c.on('open', () => connected(c));
+    c.on('error', e => { dbg.textContent = 'Conn error: ' + e; });
+    let secs = 0;
+    const t = setInterval(() => {
+      secs++;
+      const pc = c.peerConnection;
+      dbg.textContent = 'Waited ' + secs + 's | network state: ' + (pc ? pc.iceConnectionState : 'none');
+      if(isConnected) { clearInterval(t); dbg.textContent=''; }
+      if(secs === 20 && !isConnected) status.textContent = 'Still trying... network may be blocking';
+    }, 1000);
   } else {
     status.textContent = "Scan this with your friend's phone camera";
     const url = location.origin + location.pathname + '?join=' + id;
@@ -65,4 +89,4 @@ document.getElementById('hi').onclick = () => {
 };
 </script>
 </body>
-</html>
+</html>s
