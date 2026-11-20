@@ -3,87 +3,318 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect</title>
+<title>Talk</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   body{font-family:sans-serif;text-align:center;padding:24px;background:#111;color:#fff}
+  select,input,button{font-size:18px;padding:10px;border-radius:12px;margin:4px;border:0}
+  input{width:230px}
+  #btn{font-size:22px;padding:18px 36px;border-radius:40px;background:#4f8cff;color:#fff;margin-top:16px}
+  #btn.on{background:#e5484d}
+  #saveKey{background:#4f8cff;color:#fff;font-size:16px}
   #qr{display:inline-block;background:#fff;padding:12px;border-radius:12px;margin:12px}
   #qr:empty{display:none}
-  button{font-size:20px;padding:14px 28px;border:0;border-radius:30px;background:#4f8cff;color:#fff;margin-top:12px}
-  #status{font-size:22px;margin:12px 0}
-  #link{font-size:12px;color:#888;word-break:break-all}
-  #log{font-size:20px}
-  #dbg{font-size:14px;color:#aaa}
+  #meterBox{width:260px;height:14px;background:#333;border-radius:8px;margin:14px auto 4px;overflow:hidden}
+  #meter{height:100%;width:0;background:#3ddc84}
+  #dbg,#link{font-size:12px;color:#888;word-break:break-all}
+  #conn{font-size:20px;margin:12px 0}
+  p{font-size:18px}
+  #out{font-size:28px}
 </style>
 </head>
 <body>
-<h2>Connect <span style="font-size:14px;color:#3ddc84">v3 supabase</span></h2>
-<div id="status">Starting...</div>
+<h2>Talk <span style="font-size:14px;color:#3ddc84">v5 two phones</span></h2>
+
+<div id="hostSetup">
+  <div>I speak: <select id="me"></select></div>
+  <div>Friend speaks: <select id="their"></select></div>
+  <div>Talking to:
+    <select id="who">
+      <option value="a close friend (casual)">Friend</option>
+      <option value="a professor or boss (very polite)">Professor</option>
+      <option value="a shopkeeper or stranger (polite)">Shopkeeper</option>
+    </select>
+  </div>
+  <div><input id="gkey" type="password" placeholder="Google AI key"><button id="saveKey">Save</button></div>
+  <div id="keyMsg" style="font-size:14px;color:#888"></div>
+</div>
+
+<div id="conn">Starting...</div>
 <div id="qr"></div>
 <p id="link"></p>
-<button id="hi" style="display:none">👋 Send hello</button>
-<p id="log"></p>
-<p id="dbg"></p>
+
+<div id="talkBox" style="display:none">
+  <button id="btn">🎤 Start conversation</button>
+  <div id="meterBox"><div id="meter"></div></div>
+  <p id="dbg"></p>
+  <p id="status"></p>
+  <p id="heard"></p>
+  <p id="out"></p>
+  <p id="emo"></p>
+  <p id="time" style="color:#888"></p>
+</div>
 
 <script>
 const SUPABASE_URL = 'https://jxtrjjsnyoyrvktjebbx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_MKpbfMzNoDUJc1iwXUA0fw_yHhZxKH3';
+const MODEL = 'gemini-flash-lite-latest';
+const PAUSE_MS = 900, MIN_SPEECH_MS = 200, MAX_SEC = 15;
+const LANGS = ['English','Telugu','Hindi','Tamil','Japanese','Korean','Chinese','Spanish','French'];
+const $ = id => document.getElementById(id);
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const params = new URLSearchParams(location.search);
 let room = params.get('room');
 const isGuest = !!room;
 if(!room) room = Math.random().toString(36).slice(2,8);
-const me = Math.random().toString(36).slice(2,8);
+const myRole = isGuest ? 'guest' : 'host';
+const myId = Math.random().toString(36).slice(2,8);
 
-const status = document.getElementById('status'), log = document.getElementById('log'), dbg = document.getElementById('dbg');
-let isConnected = false;
+LANGS.forEach(l => { $('me').add(new Option(l,l)); $('their').add(new Option(l,l)); });
+$('me').value = 'English'; $('their').value = 'Japanese';
+if(isGuest) $('hostSetup').style.display = 'none';
 
+let gkey = '';
+try{ gkey = localStorage.getItem('gkey') || ''; }catch(e){}
+if(gkey){ $('gkey').value = gkey; $('keyMsg').textContent = 'Key loaded ✓'; }
+$('saveKey').onclick = () => {
+  gkey = $('gkey').value.trim();
+  try{ localStorage.setItem('gkey', gkey); }catch(e){}
+  $('keyMsg').textContent = gkey ? 'Key saved ✓' : 'No key';
+};
+
+function setTheirLang(name){
+  if(!name) return;
+  const s = $('their');
+  if(![...s.options].some(o => o.value === name)) s.add(new Option(name,name));
+  s.value = name;
+}
+function setStatus(t){ $('status').textContent = t; }
+
+/* ---------- relay ---------- */
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const ch = sb.channel('room-' + room, {config:{broadcast:{self:false}}});
+function send(p){ return ch.send({type:'broadcast', event:'msg', payload:Object.assign({from:myId}, p)}); }
 
-function send(payload){ ch.send({type:'broadcast', event:'msg', payload:Object.assign({from:me}, payload)}); }
-
+let isConnected = false;
 function connected(){
   if(isConnected) return;
   isConnected = true;
-  status.textContent = '✅ Connected!';
-  document.getElementById('qr').innerHTML = '';
-  document.getElementById('link').textContent = '';
-  document.getElementById('hi').style.display = 'inline-block';
+  $('conn').textContent = '✅ Connected!';
+  $('qr').innerHTML = ''; $('link').textContent = '';
+  $('talkBox').style.display = 'block';
   try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
 }
 
+const inbox = {};
 ch.on('broadcast', {event:'msg'}, ({payload}) => {
-  if(payload.from === me) return;
+  if(payload.from === myId) return;
   if(payload.type === 'join' && !isGuest){ connected(); send({type:'welcome'}); }
   else if(payload.type === 'welcome' && isGuest){ connected(); }
-  else if(payload.type === 'hello'){
-    log.textContent = 'Received: ' + payload.text;
-    try{ navigator.vibrate && navigator.vibrate(100); }catch(e){}
+  else if(payload.type === 'audio' && !isGuest){
+    const m = inbox[payload.id] || (inbox[payload.id] = {n:payload.n, parts:[], got:0});
+    if(!m.parts[payload.i]){ m.parts[payload.i] = payload.data; m.got++; }
+    if(m.got === m.n){ const data = m.parts.join(''); delete inbox[payload.id]; handleAudio(data, 'guest'); }
+  }
+  else if(payload.type === 'result' && isGuest){
+    showResult(payload);
+    if(payload.speaker === 'host'){ if(on) speak(payload.translation, payload.lang); }
+    else { turnCounter++; resumeListening(); }
+  }
+  else if(payload.type === 'error' && isGuest){
+    setStatus('Host error: ' + payload.text);
+    setTimeout(resumeListening, 2500);
   }
 });
 
 ch.subscribe(s => {
-  dbg.textContent = 'Relay: ' + s;
+  $('dbg').textContent = 'Relay: ' + s;
   if(s === 'SUBSCRIBED'){
     if(isGuest){
-      status.textContent = 'Connecting...';
+      $('conn').textContent = 'Connecting...';
       send({type:'join'});
-      setTimeout(() => { if(!isConnected) status.textContent = 'Still trying... is the other page open?'; }, 8000);
+      setTimeout(() => { if(!isConnected) $('conn').textContent = 'Still trying... is the laptop page open?'; }, 8000);
     } else {
-      status.textContent = "Scan this with your friend's phone camera";
+      $('conn').textContent = "Scan this with your friend's phone camera";
       const url = location.origin + location.pathname + '?room=' + room;
-      new QRCode(document.getElementById('qr'), {text:url, width:220, height:220});
-      document.getElementById('link').textContent = url;
+      new QRCode($('qr'), {text:url, width:220, height:220});
+      $('link').textContent = url;
     }
   } else if(s === 'CHANNEL_ERROR' || s === 'TIMED_OUT'){
-    status.textContent = 'Error: could not reach the relay (' + s + ')';
+    $('conn').textContent = 'Error: could not reach the relay (' + s + ')';
   }
 });
 
-document.getElementById('hi').onclick = () => {
-  send({type:'hello', text:'Hello 👋 from ' + (isGuest ? 'guest' : 'host')});
+/* ---------- audio helpers ---------- */
+function toWav16k(samples, srcRate){
+  const SR = 16000, ratio = srcRate/SR, n = Math.floor(samples.length/ratio);
+  const o = new DataView(new ArrayBuffer(44 + n*2));
+  const w = (p,s)=>{for(let i=0;i<s.length;i++)o.setUint8(p+i,s.charCodeAt(i));};
+  w(0,'RIFF');o.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');
+  o.setUint32(16,16,true);o.setUint16(20,1,true);o.setUint16(22,1,true);
+  o.setUint32(24,SR,true);o.setUint32(28,SR*2,true);o.setUint16(32,2,true);o.setUint16(34,16,true);
+  w(36,'data');o.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){
+    const s=Math.max(-1,Math.min(1,samples[Math.floor(i*ratio)]));
+    o.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);
+  }
+  return o.buffer;
+}
+function b64(buf){let s='';const b=new Uint8Array(buf);for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s);}
+
+async function sendAudio(data){
+  const id = Math.random().toString(36).slice(2,8), SZ = 60000, n = Math.ceil(data.length/SZ);
+  for(let i=0;i<n;i++){ await send({type:'audio', id, i, n, data:data.slice(i*SZ,(i+1)*SZ)}); }
+}
+
+/* ---------- translation (runs on the laptop / host only) ---------- */
+async function translate(data, speaker){
+  if(!gkey) throw new Error('Paste your Google AI key first and tap Save');
+  const me = $('me').value, who = $('who').value;
+  let prompt;
+  if(speaker === 'host'){
+    const target = $('their').value || 'Japanese';
+    prompt = `Live interpreter. The speaker speaks ${me} and is talking to ${who}. Translate what they say into ${target}, using the matching politeness level. Keep the speaker's emotion in wording and punctuation. Reply JSON only: heard, detected_language (English name of the language), translation, translation_lang_code (BCP-47 like ja-JP), emotion (one word).`;
+  } else {
+    prompt = `Live interpreter. The speaker is the user's friend and can speak ANY language. Detect the language, then translate what they say into ${me}. Keep the speaker's emotion in wording and punctuation. Reply JSON only: heard, detected_language (English name of the language, like French), translation, translation_lang_code (BCP-47 code of ${me}), emotion (one word).`;
+  }
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent?key=' + gkey, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      contents:[{parts:[{text:prompt},{inline_data:{mime_type:'audio/wav',data:data}}]}],
+      generationConfig:{responseMimeType:'application/json'}
+    })
+  });
+  const d = await r.json();
+  if(!d.candidates) throw new Error(JSON.stringify(d.error||d));
+  let j = JSON.parse(d.candidates[0].content.parts[0].text);
+  if(Array.isArray(j)) j = j[0];
+  return j;
+}
+
+async function handleAudio(data, speaker){
+  if(speaker === 'guest'){ busy = true; setStatus('Thinking...'); }
+  const t0 = performance.now();
+  try{
+    const j = await translate(data, speaker);
+    if(speaker === 'guest') setTheirLang(j.detected_language);
+    const res = {type:'result', speaker, heard:j.heard, translation:j.translation,
+                 lang:j.translation_lang_code, emotion:j.emotion, detected:j.detected_language};
+    showResult(res);
+    $('time').textContent = 'AI took ' + ((performance.now()-t0)/1000).toFixed(1) + ' seconds';
+    send(res);
+    if(speaker === 'guest'){ if(on) speak(j.translation, j.translation_lang_code); else busy = false; }
+    else resumeListening();
+  }catch(err){
+    setStatus('Error: ' + err.message);
+    send({type:'error', text:err.message});
+    setTimeout(resumeListening, 2500);
+  }
+}
+
+function showResult(r){
+  $('heard').textContent = (r.speaker === myRole ? 'You said' : 'They said') + ' (' + r.detected + '): ' + r.heard;
+  $('out').textContent = r.translation;
+  $('emo').textContent = 'Feeling: ' + r.emotion;
+  if(isGuest && r.speaker === myRole && sentAt){
+    $('time').textContent = 'Round trip ' + ((performance.now()-sentAt)/1000).toFixed(1) + ' seconds';
+  }
+}
+
+function speak(text, lang){
+  busy = true; speaking = true;
+  setStatus('🔊 Speaking...');
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang || 'en-US';
+  u.onend = resumeListening; u.onerror = resumeListening;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- microphone, hands-free ---------- */
+let ctx=null, stream=null, proc=null, on=false, busy=false, speaking=false;
+let collecting=false, buf=[], pre=[], silenceMs=0, speechMs=0;
+let calibrating=false, calMs=0, calSum=0, calN=0, thr=0.012;
+let sentAt=0, turnCounter=0;
+
+function resumeListening(){
+  collecting=false; buf=[]; pre=[]; silenceMs=0; speechMs=0; busy=false; speaking=false;
+  if(on) setStatus('👂 Listening... just speak');
+}
+
+async function finish(){
+  const tooShort = speechMs < MIN_SPEECH_MS;
+  const chunks = buf; collecting=false; buf=[]; pre=[]; silenceMs=0;
+  if(tooShort){ speechMs=0; if(on) setStatus('👂 Listening... just speak'); return; }
+  speechMs=0; busy=true;
+  setStatus('Thinking...');
+  let len=0; chunks.forEach(c=>len+=c.length);
+  const all = new Float32Array(len); let p=0;
+  chunks.forEach(c=>{all.set(c,p);p+=c.length;});
+  const data = b64(toWav16k(all, ctx.sampleRate));
+  sentAt = performance.now();
+  if(isGuest){
+    const turn = ++turnCounter;
+    try{ await sendAudio(data); }catch(e){ setStatus('Error: ' + e.message); }
+    setTimeout(() => { if(turn === turnCounter && busy && !speaking) resumeListening(); }, 20000);
+  } else {
+    await handleAudio(data, 'host');
+  }
+}
+
+function onAudio(e){
+  const d = new Float32Array(e.inputBuffer.getChannelData(0));
+  let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]*d[i];
+  const rms = Math.sqrt(sum/d.length);
+  const ms = d.length/ctx.sampleRate*1000;
+  $('meter').style.width = Math.min(100, (rms/(thr*2))*100) + '%';
+
+  if(calibrating){
+    calSum += rms; calN++; calMs += ms;
+    setStatus('🤫 Stay quiet for 1 second...');
+    if(calMs >= 1000){
+      calibrating = false;
+      thr = Math.min(0.02, Math.max(0.006, (calSum/calN)*2.5));
+      resumeListening();
+    }
+    return;
+  }
+  if(busy) return;
+
+  const loud = collecting ? (rms > thr*0.5) : (rms > thr);
+  if(loud){
+    if(!collecting){ collecting=true; buf=[...pre]; pre=[]; setStatus('🎙 Hearing you...'); }
+    speechMs += ms; silenceMs = 0; buf.push(d);
+  } else if(collecting){
+    buf.push(d); silenceMs += ms;
+    if(silenceMs > PAUSE_MS) finish();
+  } else {
+    pre.push(d); if(pre.length>3) pre.shift();
+  }
+  if(collecting && buf.length*d.length/ctx.sampleRate > MAX_SEC) finish();
+}
+
+$('btn').onclick = async () => {
+  try{
+    if(!on){
+      try{ speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); }catch(e){}
+      stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      ctx = new (window.AudioContext||window.webkitAudioContext)();
+      await ctx.resume();
+      const src = ctx.createMediaStreamSource(stream);
+      proc = ctx.createScriptProcessor(4096,1,1);
+      proc.onaudioprocess = onAudio;
+      src.connect(proc); proc.connect(ctx.destination);
+      on = true; $('btn').textContent = '⏹ Stop conversation'; $('btn').classList.add('on');
+      calibrating = true; calMs = 0; calSum = 0; calN = 0; busy = false; speaking = false;
+    } else {
+      on = false; busy = false; calibrating = false;
+      proc.disconnect(); stream.getTracks().forEach(t=>t.stop()); ctx.close();
+      speechSynthesis.cancel();
+      $('btn').textContent = '🎤 Start conversation'; $('btn').classList.remove('on');
+      setStatus(''); $('meter').style.width = '0';
+    }
+  }catch(err){ setStatus('Error: ' + err.message); }
 };
 </script>
 </body>
