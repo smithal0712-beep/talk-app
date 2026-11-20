@@ -62,7 +62,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--mut);margin-bottom:8px
 <header>
   <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 11v2M8 7v10M12 3v18M16 7v10M20 11v2"/></svg></div>
   <div><h1>Talk</h1><div class="tag">Understands people, not just words</div></div>
-  <span class="ver">v11</span>
+  <span class="ver">v14</span>
 </header>
 
 <div class="card" id="keyRow">
@@ -92,6 +92,10 @@ details summary{cursor:pointer;font-size:13px;color:var(--mut);margin-bottom:8px
     <div id="out"></div>
     <div class="tags"><span id="emo"></span><span id="style"></span></div>
     <div id="time" class="small" style="margin-top:8px"></div>
+  </div>
+  <div class="card" id="agentCard" style="display:none">
+    <div class="small" style="margin-bottom:6px">🤖 Helper agent notes</div>
+    <div id="agentNotes" class="small"></div>
   </div>
   <div class="controls">
     <button id="muteMic">🎙 Mic: ON</button>
@@ -126,6 +130,7 @@ const hintName=()=>PREFIX[(navigator.language||'').slice(0,2).toLowerCase()]||nu
 
 let holdUntil=0,micMuted=false,voiceOn=true,isConnected=false;
 let hostList=[],primary='',guestLang=null,guestHint=null;
+let mem={relationship:'',formality:'',summary:'',slang:[]},agentBusy=false;
 let history=[],votes={host:{male:0,female:0},guest:{male:0,female:0}};
 let ctx=null,stream=null,proc=null,on=false,busy=false,speaking=false;
 let collecting=false,buf=[],pre=[],silenceMs=0,speechMs=0;
@@ -174,7 +179,7 @@ $('myChips').onclick=e=>{
   if(c&&c.dataset.l&&hostList.includes(c.dataset.l)){primary=c.dataset.l;shareLangs();}
 };
 $('addLang').onchange=()=>{const v=$('addLang').value;if(v&&!inList(v,hostList)){hostList.push(v);primary=v;shareLangs();}$('addLang').value='';};
-function resetState(){guestLang=null;history=[];votes={host:{male:0,female:0},guest:{male:0,female:0}};shareLangs();}
+function resetState(){mem={relationship:'',formality:'',summary:'',slang:[]};try{$('agentCard').style.display='none';}catch(e){}guestLang=null;history=[];votes={host:{male:0,female:0},guest:{male:0,female:0}};shareLangs();}
 
 /* ---------- relay ---------- */
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
@@ -289,6 +294,8 @@ Rules:
 6. Judge the speaker from the voice: speaker_gender is male or female, energy is low, medium or high.
 7. Write the translation in the normal native script of ${target}.
 
+What the helper agent already knows about this conversation (use it to keep tone consistent): ${JSON.stringify(mem)}
+
 Conversation so far:
 ${talk}
 
@@ -302,6 +309,28 @@ Reply with JSON only: accepted (true or false), heard, detected_language (Englis
   let j=JSON.parse(d.candidates[0].content.parts[0].text);
   if(Array.isArray(j))j=j[0];
   return j;
+}
+
+
+/* ---------- background helper agent (never blocks the live translation) ---------- */
+async function agentUpdate(){
+  if(agentBusy||!gkey||history.length<1)return;
+  agentBusy=true;
+  try{
+    const talk=history.map(h=>(h.who==='host'?'A':'B')+': '+h.heard+' => '+h.translation).join('\n');
+    const prompt=`You are a quiet helper agent that watches a live conversation between Person A and Person B who speak different languages. Update your notes.
+Current notes: ${JSON.stringify(mem)}
+Latest lines:
+${talk}
+Reply with JSON only: relationship (short, e.g. "friends", "customer and plumber", "student and professor"), formality (casual, polite or formal), summary (one short sentence of what the talk is about), slang (array of up to 4 slang or idioms heard, each as "phrase = meaning"). Keep earlier notes unless the new lines clearly change them.`;
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODEL+':generateContent?key='+gkey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json'}})});
+    const d=await r.json();
+    let j=JSON.parse(d.candidates[0].content.parts[0].text);if(Array.isArray(j))j=j[0];
+    mem={relationship:j.relationship||mem.relationship,formality:j.formality||mem.formality,summary:j.summary||mem.summary,slang:Array.isArray(j.slang)?j.slang.slice(0,6):mem.slang};
+    $('agentCard').style.display='block';
+    $('agentNotes').innerHTML=(mem.relationship?'👥 '+mem.relationship+' · '+mem.formality+'<br>':'')+(mem.summary?'📝 '+mem.summary+'<br>':'')+(mem.slang.length?'💬 '+mem.slang.join('<br>💬 '):'');
+  }catch(e){log('agent: '+e.message);}
+  agentBusy=false;
 }
 
 async function handleAudio(data,S){
@@ -333,6 +362,7 @@ async function handleAudio(data,S){
       heard:j.heard||'',translation:j.translation||'',lang:CODES[into]||j.translation_lang_code||'en-US',
       emotion:j.emotion||'',energy:(j.energy||'medium').toLowerCase(),gender,register:j.register||'',relationship:j.relationship||''};
     showResult(res);
+    if(ok)setTimeout(agentUpdate,50);
     $('time').textContent='AI took '+((performance.now()-t0)/1000).toFixed(1)+' seconds';
     send(res);
     if(hs)resumeListening();
