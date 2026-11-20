@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Talk">
+<meta name="theme-color" content="#0b1020">
+<title>Talk</title>
+<link rel="apple-touch-icon" id="icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b1020;--card:rgba(255,255,255,.06);--line:rgba(255,255,255,.12);--txt:#eef1ff;--mut:#9aa3c7;--a:#6c8cff;--b:#a46bff;--ok:#3ddc97;--warn:#f5c04a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;font-family:Inter,system-ui,-apple-system,sans-serif;color:var(--txt);background:radial-gradient(900px 500px at 15% -10%,rgba(108,140,255,.28),transparent 60%),radial-gradient(700px 500px at 95% 10%,rgba(164,107,255,.22),transparent 60%),radial-gradient(800px 600px at 50% 120%,rgba(61,220,151,.12),transparent 60%),var(--bg);background-attachment:fixed}
+.wrap{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 96px)}
+header{display:flex;align-items:center;gap:12px;margin:4px 0 16px}
+.logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,var(--a),var(--b));display:grid;place-items:center;box-shadow:0 8px 24px rgba(108,140,255,.35)}
+h1{font-size:22px;margin:0;letter-spacing:-.3px}
+.tag{font-size:12px;color:var(--mut)}
+#keyBtn{margin-left:auto;padding:8px 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;margin-bottom:14px;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.center{text-align:center}
+.small{font-size:12px;color:var(--mut);word-break:break-word}
+.small2{font-size:14px;color:#cfd5f5;line-height:1.5}
+.lbl2{font-size:12px;color:var(--mut);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.6px}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.lbl{width:64px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;flex:none}
+.grow{flex:1;min-width:0}
+input,textarea,select,button{font-family:inherit;color:var(--txt);background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:15px;outline:none}
+textarea{width:100%;min-height:96px;resize:vertical;margin-bottom:10px}
+input{flex:1;min-width:0}
+option{color:#111}
+.primary,#saveKey{background:linear-gradient(135deg,var(--a),var(--b));border:0;font-weight:600;width:100%}
+#saveKey{width:auto}
+.chips{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:99px;font-size:13px;border:1px solid var(--line);background:rgba(255,255,255,.05)}
+.chip.on{background:linear-gradient(135deg,rgba(108,140,255,.35),rgba(164,107,255,.35));border-color:rgba(164,107,255,.7)}
+.chip b{font-weight:400;opacity:.7}
+.chip.sit{cursor:pointer}
+.mini{padding:6px 8px;font-size:13px;max-width:110px}
+.mic{width:100%;padding:18px;font-size:18px;font-weight:600;border:0;border-radius:18px;background:linear-gradient(135deg,var(--a),var(--b));box-shadow:0 10px 30px rgba(108,140,255,.35)}
+.mic.on{background:linear-gradient(135deg,#ff5d73,#ff8a5d);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,115,.5)}70%{box-shadow:0 0 0 16px rgba(255,93,115,0)}100%{box-shadow:0 0 0 0 rgba(255,93,115,0)}}
+#meterBox{height:6px;background:rgba(255,255,255,.1);border-radius:6px;margin:14px 0 8px;overflow:hidden}
+#meter{height:100%;width:0;background:linear-gradient(90deg,var(--ok),var(--a))}
+.pill{min-height:20px;font-size:14px;color:var(--mut);margin-bottom:14px}
+.chat{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;max-height:44vh;overflow:auto}
+.bub{max-width:90%;padding:12px 14px;border-radius:18px;border:1px solid var(--line)}
+.bub.me{align-self:flex-end;background:linear-gradient(135deg,rgba(108,140,255,.30),rgba(164,107,255,.30))}
+.bub.they{align-self:flex-start;background:var(--card)}
+.orig{font-size:12px;color:var(--mut)}
+.tr{font-size:20px;font-weight:600;margin:4px 0;line-height:1.35}
+.tg{font-size:11px;color:var(--warn)}
+.controls{display:flex;gap:8px;flex-wrap:wrap}
+.controls>*{flex:1 1 auto}
+.off{background:rgba(255,93,115,.25)!important}
+.big{font-size:24px;font-weight:600;line-height:1.35;margin:4px 0}
+.ver{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:15px}
+.ver span:last-child{flex:1}
+.tagk{font-size:11px;padding:3px 9px;border-radius:99px;background:rgba(245,192,74,.14);color:var(--warn);white-space:nowrap}
+.sp{padding:6px 9px;font-size:14px}
+.err{color:#ff8a8a;font-size:13px;margin-top:8px;word-break:break-word}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:6px;padding:8px 12px calc(env(safe-area-inset-bottom) + 8px);background:rgba(11,16,32,.85);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--line)}
+nav button{flex:1;max-width:150px;padding:10px 6px;border:0;background:transparent;color:var(--mut);font-size:12px;border-radius:14px}
+nav button.on{color:#fff;background:linear-gradient(135deg,rgba(108,140,255,.35),rgba(164,107,255,.35))}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 11v2M8 7v10M12 3v18M16 7v10M20 11v2"/></svg></div>
+  <div><h1>Talk</h1><div class="tag">Understands people, not just words</div></div>
+  <button id="keyBtn">🔑</button>
+</header>
+
+<div class="card" id="keyCard" hidden>
+  <div class="lbl2" style="margin-top:0">Google AI key (stays on this phone only)</div>
+  <div class="row"><input id="gkey" type="password" placeholder="Paste your key"><button id="saveKey">Save</button></div>
+  <div id="keyMsg" class="small"></div>
+</div>
+
+<section id="tab-talk">
+  <div class="card">
+    <div class="row"><span class="lbl">Me</span><div id="myChips" class="chips"></div><select id="addLang" class="mini"></select></div>
+    <div class="row"><span class="lbl">They</span><select id="theirSel" class="grow"></select></div>
+  </div>
+  <div id="chat" class="chat"></div>
+  <div class="center">
+    <button id="btn" class="mic">🎤 Start conversation</button>
+    <div id="meterBox"><div id="meter"></div></div>
+    <div id="status" class="pill"></div>
+  </div>
+  <div class="controls">
+    <button id="muteMic">🎙 Mic: ON</button>
+    <button id="muteVoice">🔊 Voice: ON</button>
+    <button id="clearChat">🧹 Clear</button>
+  </div>
+</section>
+
+<section id="tab-tr" hidden>
+  <div class="card">
+    <textarea id="trIn" placeholder="Type or paste anything..."></textarea>
+    <div class="row"><select id="trTo" class="grow"></select>
+      <select id="trTone"><option value="auto">Tone: Auto</option><option value="casual">Casual</option><option value="polite">Polite</option><option value="formal">Formal</option><option value="business">Business</option></select></div>
+    <button id="trGo" class="primary">Translate</button>
+    <div id="trErr" class="err"></div>
+  </div>
+  <div class="card" id="trOut" hidden>
+    <div id="trMain" class="big"></div>
+    <div id="trPron" class="small"></div>
+    <div class="row"><button id="trSpeak">🔊 Listen</button><button id="trCopy">📋 Copy</button></div>
+    <div class="lbl2">Other tones</div>
+    <div id="trVers"></div>
+    <div class="lbl2">Why this wording</div>
+    <div id="trNotes" class="small2"></div>
+  </div>
+</section>
+
+<section id="tab-learn" hidden>
+  <div class="card">
+    <div class="row"><span class="lbl">I speak</span><select id="lnNative" class="grow"></select></div>
+    <div class="row"><span class="lbl">Learning</span><select id="lnTarget" class="grow"></select></div>
+    <textarea id="lnIn" placeholder="What do you want to say? e.g. Could you fix my sink today?"></textarea>
+    <button id="lnGo" class="primary">Teach me</button>
+    <div id="lnErr" class="err"></div>
+  </div>
+  <div class="lbl2">Quick situations</div>
+  <div class="chips" id="lnSits" style="margin-bottom:14px"></div>
+  <div id="lnOut"></div>
+</section>
+</div>
+
+<nav>
+  <button data-tab="talk" class="on">💬<br>Talk</button>
+  <button data-tab="tr">🌐<br>Translate</button>
+  <button data-tab="learn">🎓<br>Learn</button>
+</nav>
+
+<script>
+const MODEL_AUDIO='gemini-flash-lite-latest', MODEL_TEXT='gemini-flash-latest';
+const PAUSE_MS=900,MIN_SPEECH_MS=200,MAX_SEC=15;
+const CODES={Telugu:'te-IN',Hindi:'hi-IN',Tamil:'ta-IN',Kannada:'kn-IN',Malayalam:'ml-IN',Urdu:'ur-PK',Bengali:'bn-IN',Marathi:'mr-IN',Gujarati:'gu-IN',Punjabi:'pa-IN',Odia:'or-IN',Assamese:'as-IN',Kashmiri:'ks-IN',Konkani:'kok-IN',Sanskrit:'sa-IN',Nepali:'ne-NP',Sindhi:'sd-IN',Dogri:'doi-IN',Maithili:'mai-IN',Manipuri:'mni-IN',Santali:'sat-IN',English:'en-US',Japanese:'ja-JP',Chinese:'zh-CN',Arabic:'ar-SA',French:'fr-FR',Spanish:'es-ES',German:'de-DE',Portuguese:'pt-BR',Russian:'ru-RU',Korean:'ko-KR',Indonesian:'id-ID',Thai:'th-TH',Vietnamese:'vi-VN',Turkish:'tr-TR',Italian:'it-IT',Persian:'fa-IR',Burmese:'my-MM',Filipino:'fil-PH',Hebrew:'he-IL',Khmer:'km-KH',Sinhala:'si-LK',Ukrainian:'uk-UA',Dutch:'nl-NL',Swahili:'sw-KE'};
+const LANGS=Object.keys(CODES);
+const PREFIX={te:'Telugu',hi:'Hindi',ta:'Tamil',kn:'Kannada',ml:'Malayalam',ur:'Urdu',bn:'Bengali',mr:'Marathi',gu:'Gujarati',pa:'Punjabi',or:'Odia',as:'Assamese',ks:'Kashmiri',sa:'Sanskrit',ne:'Nepali',sd:'Sindhi',en:'English',ja:'Japanese',zh:'Chinese',ar:'Arabic',fr:'French',es:'Spanish',de:'German',pt:'Portuguese',ru:'Russian',ko:'Korean',id:'Indonesian',th:'Thai',vi:'Vietnamese',tr:'Turkish',it:'Italian',fa:'Persian',my:'Burmese',tl:'Filipino',he:'Hebrew',km:'Khmer',si:'Sinhala',uk:'Ukrainian',nl:'Dutch',sw:'Swahili'};
+const MALE=['otoya','ichiro','takumi','hattori','daniel','alex','aaron','fred','arthur','rishi','david','mark','ravi','hemant','kangkang','jorge','juan','thomas','markus','mohan','valluvar','guy','james','george','ryan','liam','yuri','pavel','maged','carlos','diego','luca','xander','henrik'];
+const FEMALE=['kyoko','o-ren','haruka','ayumi','sayaka','nanami','samantha','karen','moira','tessa','nicky','veena','zira','heera','lekha','shruti','pallavi','yuna','heami','tingting','meijia','yaoyao','huihui','monica','paulina','amelie','audrey','anna','petra','susan','hazel','jenny','aria','milena','katya','irina','laila','carmit','damayanti','kanya','linh','yelda','alice','federica','ellen','fiona','joana','luciana'];
+const SITS=['Plumber / repairman','Restaurant','Train station','Hospital','Shopping','Neighbours','Landlord','Making friends'];
+const ALIAS={farsi:'persian',mandarin:'chinese',cantonese:'chinese',tagalog:'filipino',meitei:'manipuri',oriya:'odia'};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const norm=s=>{const w=String(s||'').toLowerCase().trim().split(/[\s(,/]+/)[0];return ALIAS[w]||w;};
+const same=(a,b)=>!!norm(a)&&norm(a)===norm(b);
+const canon=n=>LANGS.find(l=>same(l,n))||String(n||'').trim();
+const inList=(l,list)=>list.some(x=>same(x,l));
+const hintName=()=>PREFIX[(navigator.language||'').slice(0,2).toLowerCase()]||null;
+const store={get(k,d){try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v);}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
+
+/* app icon for Add to Home Screen */
+(function(){const c=document.createElement('canvas');c.width=c.height=180;const x=c.getContext('2d');const g=x.createLinearGradient(0,0,180,180);g.addColorStop(0,'#6c8cff');g.addColorStop(1,'#a46bff');x.fillStyle=g;x.fillRect(0,0,180,180);x.strokeStyle='#fff';x.lineWidth=12;x.lineCap='round';[[40,80,100],[65,55,125],[90,35,145],[115,55,125],[140,80,100]].forEach(a=>{x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(a[0],a[2]);x.stroke();});$('icon').href=c.toDataURL('image/png');})();
+
+/* ---------- state ---------- */
+let gkey=store.get('gkey','');
+let myList=store.get('myList',[hintName()||'English']);
+let primary=store.get('primary',myList[0]);
+let theirLang=store.get('theirLang','Japanese');
+let micMuted=false,voiceOn=true,history=[],votes={me:{male:0,female:0},they:{male:0,female:0}};
+try{speechSynthesis.getVoices();speechSynthesis.onvoiceschanged=()=>{};}catch(e){}
+
+/* ---------- key ---------- */
+function showKeyCard(v){$('keyCard').hidden=!v;}
+showKeyCard(!gkey);
+$('keyBtn').onclick=()=>{$('gkey').value=gkey;showKeyCard($('keyCard').hidden);};
+$('saveKey').onclick=()=>{gkey=$('gkey').value.trim();store.set('gkey',gkey);$('keyMsg').textContent=gkey?'Saved ✓':'No key';if(gkey)setTimeout(()=>showKeyCard(false),600);};
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  ['talk','tr','learn'].forEach(t=>$('tab-'+t).hidden=(t!==b.dataset.tab));
+});
+
+/* ---------- Gemini ---------- */
+async function gem(parts,model){
+  if(!gkey){showKeyCard(true);throw new Error('Add your Google AI key first');}
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+gkey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}],generationConfig:{responseMimeType:'application/json'}})});
+  const d=await r.json();
+  if(!d.candidates)throw new Error(JSON.stringify(d.error||d));
+  let j=JSON.parse(d.candidates[0].content.parts[0].text);
+  if(Array.isArray(j))j=j[0];
+  return j;
+}
+
+/* ---------- voice helpers ---------- */
+function pickVoice(lang,gender){
+  const vs=speechSynthesis.getVoices();
+  const p=(lang||'en').toLowerCase().replace('_','-').split('-')[0];
+  const sl=vs.filter(v=>(v.lang||'').toLowerCase().replace('_','-').split('-')[0]===p);
+  const has=(v,list)=>list.some(n=>v.name.toLowerCase().includes(n));
+  let v=null;
+  if(gender==='male')v=sl.find(x=>has(x,MALE));
+  if(gender==='female')v=sl.find(x=>has(x,FEMALE));
+  return {voice:v||sl.find(x=>x.default)||sl[0]||null,matched:!!v,listLoaded:vs.length>0};
+}
+function say(text,lang){
+  try{speechSynthesis.cancel();}catch(e){}
+  const u=new SpeechSynthesisUtterance(text);u.lang=lang||'en-US';
+  const p=pickVoice(u.lang,'');if(p.voice){u.voice=p.voice;u.lang=p.voice.lang||u.lang;}
+  speechSynthesis.speak(u);
+}
+document.addEventListener('click',e=>{const b=e.target.closest('.sp');if(b)say(b.dataset.t,b.dataset.l);});
+
+/* =====================  TALK  ===================== */
+LANGS.forEach(l=>{$('theirSel').add(new Option(l,l));});
+$('addLang').add(new Option('＋ Add',''));LANGS.forEach(l=>$('addLang').add(new Option(l,l)));
+function setTheir(l){if(!l)return;const s=$('theirSel');if(![...s.options].some(o=>o.value===l))s.add(new Option(l,l));s.value=l;theirLang=l;store.set('theirLang',l);}
+setTheir(theirLang);
+$('theirSel').onchange=()=>setTheir($('theirSel').value);
+function renderChips(){
+  $('myChips').innerHTML=myList.map(l=>'<span class="chip '+(same(l,primary)?'on':'')+'" data-l="'+esc(l)+'">'+esc(l)+(myList.length>1?'<b data-x="'+esc(l)+'">×</b>':'')+'</span>').join('');
+}
+$('myChips').onclick=e=>{
+  const x=e.target.dataset.x;
+  if(x){myList=myList.filter(l=>l!==x);if(same(primary,x))primary=myList[0];store.set('myList',myList);store.set('primary',primary);renderChips();return;}
+  const c=e.target.closest('.chip');
+  if(c&&c.dataset.l){primary=c.dataset.l;store.set('primary',primary);renderChips();}
+};
+$('addLang').onchange=()=>{const v=$('addLang').value;if(v&&!inList(v,myList)){myList.push(v);primary=v;store.set('myList',myList);store.set('primary',primary);renderChips();}$('addLang').value='';};
+renderChips();
+
+const setStatus=t=>{$('status').textContent=t;};
+let ctx=null,stream=null,proc=null,on=false,busy=false;
+let collecting=false,buf=[],pre=[],silenceMs=0,speechMs=0;
+let calibrating=false,calMs=0,calSum=0,calN=0,thr=0.012;
+
+function talkPrompt(){
+  const talk=history.map(h=>(h.me?'ME':'THEM')+': '+h.heard).join('\n')||'(this is the start)';
+  return `You are a live interpreter for two people sharing one phone, face to face.
+ME speaks: ${myList.join(' / ')} (may mix them in one sentence). THEM speaks: ${theirLang} (this may be a different language if someone new talks, so detect it yourself).
+Listen and detect the main language of the audio.
+- If it is one of ME's languages: translate into ${theirLang}.
+- Otherwise: translate into ${primary}.
+- If the audio is silence or noise, set accepted to false and leave the other fields empty.
+
+Rules:
+1. Translate the meaning and intent, not word for word. Slang, idioms, jokes and sarcasm must come out as what they mean in this situation. Example: "You are killing it, brother" is praise, never anything about killing. Use the conversation so far to understand what words refer to.
+2. Choose the politeness yourself from how the speaker talks, what it is about, and the likely relationship (friends, teacher, boss, customer and shopkeeper, tradesperson, strangers). When unsure be polite but friendly. In languages with politeness levels (Japanese, Korean and others) use what a native speaker would use in that exact relationship. Match the speaker's vocabulary level.
+3. Keep the emotion in wording and punctuation.
+4. Judge the speaker's voice: speaker_gender is male or female, energy is low, medium or high.
+5. Write the translation in the normal native script of the target language.
+
+Conversation so far:
+${talk}
+
+Reply JSON only: accepted (true or false), heard, detected_language (English name), translated_into (English name), translation, translation_lang_code (BCP-47), emotion (one or two words), energy, speaker_gender, register (one or two words), relationship (one or two words).`;
+}
+
+function addBubble(me,j,secs){
+  const d=document.createElement('div');d.className='bub '+(me?'me':'they');
+  d.innerHTML='<div class="orig"></div><div class="tr"></div><div class="tg"></div>';
+  d.children[0].textContent=(me?'You':'They')+' ('+j.det+'): '+j.heard;
+  d.children[1].textContent=j.translation;
+  d.children[2].textContent=[j.emotion,j.register,j.relationship,secs+'s'].filter(Boolean).join(' · ');
+  $('chat').appendChild(d);
+  while($('chat').children.length>12)$('chat').removeChild($('chat').firstChild);
+  d.scrollIntoView({behavior:'smooth',block:'end'});
+}
+
+async function handle(data){
+  busy=true;setStatus('Thinking...');
+  const t0=performance.now();
+  try{
+    const j=await gem([{text:talkPrompt()},{inline_data:{mime_type:'audio/wav',data:data}}],MODEL_AUDIO);
+    const det=canon(j.detected_language);
+    const ok=(j.accepted===true||j.accepted==='true')&&!!det&&!!String(j.translation||'').trim();
+    if(!ok){setStatus('🚫 Did not catch clear speech');setTimeout(resume,1500);return;}
+    const me=inList(det,myList);
+    const sp=me?'me':'they';
+    if(me){primary=myList.find(l=>same(l,det))||primary;store.set('primary',primary);renderChips();}
+    else setTheir(det);
+    const g=String(j.speaker_gender||'').toLowerCase();
+    if(g==='male'||g==='female')votes[sp][g]++;
+    const v=votes[sp];
+    const gender=v.male===v.female?'':(v.male>v.female?'male':'female');
+    history.push({me,heard:j.heard||''});if(history.length>8)history.shift();
+    const secs=((performance.now()-t0)/1000).toFixed(1);
+    addBubble(me,{det,heard:j.heard,translation:j.translation,emotion:j.emotion,register:j.register,relationship:j.relationship},secs);
+    const into=canon(j.translated_into);
+    speakTalk(j.translation,CODES[into]||j.translation_lang_code||'en-US',{gender,energy:String(j.energy||'medium').toLowerCase()});
+  }catch(err){setStatus('Error: '+err.message);setTimeout(resume,3000);}
+}
+
+function speakTalk(text,lang,info){
+  if(!voiceOn){resume();return;}
+  const pick=pickVoice(lang,info.gender);
+  if(pick.listLoaded&&!pick.voice){setStatus('📝 No voice for this language on this phone, text only');setTimeout(resume,1800);return;}
+  setStatus('🔊 Speaking...');
+  const u=new SpeechSynthesisUtterance(text);u.lang=lang;
+  if(pick.voice){u.voice=pick.voice;u.lang=pick.voice.lang||lang;}
+  let pitch=1,rate=1;
+  if(info.gender&&!pick.matched)pitch=info.gender==='male'?0.8:1.15;
+  if(info.energy==='high'){rate=1.08;pitch+=0.08;}else if(info.energy==='low'){rate=0.92;pitch-=0.08;}
+  u.pitch=Math.max(0.5,Math.min(1.8,pitch));u.rate=rate;
+  const done=()=>setTimeout(resume,700);
+  u.onend=done;u.onerror=done;
+  speechSynthesis.speak(u);
+}
+
+function resume(){
+  collecting=false;buf=[];pre=[];silenceMs=0;speechMs=0;busy=false;
+  if(on)setStatus(micMuted?'🔇 Mic muted':'👂 Listening... just speak');
+}
+
+function toWav16k(samples,srcRate){
+  const SR=16000,ratio=srcRate/SR,n=Math.floor(samples.length/ratio);
+  const o=new DataView(new ArrayBuffer(44+n*2));
+  const w=(p,s)=>{for(let i=0;i<s.length;i++)o.setUint8(p+i,s.charCodeAt(i));};
+  w(0,'RIFF');o.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');
+  o.setUint32(16,16,true);o.setUint16(20,1,true);o.setUint16(22,1,true);
+  o.setUint32(24,SR,true);o.setUint32(28,SR*2,true);o.setUint16(32,2,true);o.setUint16(34,16,true);
+  w(36,'data');o.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){const s=Math.max(-1,Math.min(1,samples[Math.floor(i*ratio)]));o.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+  return o.buffer;
+}
+function b64(buf){let s='';const b=new Uint8Array(buf);for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s);}
+
+async function finish(){
+  const tooShort=speechMs<MIN_SPEECH_MS;
+  const chunks=buf;collecting=false;buf=[];pre=[];silenceMs=0;
+  if(tooShort){speechMs=0;if(on)setStatus('👂 Listening... just speak');return;}
+  speechMs=0;busy=true;setStatus('Thinking...');
+  let len=0;chunks.forEach(c=>len+=c.length);
+  const all=new Float32Array(len);let p=0;
+  chunks.forEach(c=>{all.set(c,p);p+=c.length;});
+  await handle(b64(toWav16k(all,ctx.sampleRate)));
+}
+
+function onAudio(e){
+  const d=new Float32Array(e.inputBuffer.getChannelData(0));
+  let sum=0;for(let i=0;i<d.length;i++)sum+=d[i]*d[i];
+  const rms=Math.sqrt(sum/d.length),ms=d.length/ctx.sampleRate*1000;
+  $('meter').style.width=micMuted?'0%':Math.min(100,(rms/(thr*2))*100)+'%';
+  if(calibrating){
+    calSum+=rms;calN++;calMs+=ms;
+    setStatus('🤫 Stay quiet for 1 second...');
+    if(calMs>=1000){calibrating=false;thr=Math.min(0.02,Math.max(0.006,(calSum/calN)*2.5));resume();}
+    return;
+  }
+  if(micMuted||busy)return;
+  const loud=collecting?(rms>thr*0.5):(rms>thr);
+  if(loud){
+    if(!collecting){collecting=true;buf=[...pre];pre=[];setStatus('🎙 Hearing you...');}
+    speechMs+=ms;silenceMs=0;buf.push(d);
+  }else if(collecting){
+    buf.push(d);silenceMs+=ms;
+    if(silenceMs>PAUSE_MS)finish();
+  }else{pre.push(d);if(pre.length>3)pre.shift();}
+  if(collecting&&buf.length*d.length/ctx.sampleRate>MAX_SEC)finish();
+}
+
+$('btn').onclick=async()=>{
+  try{
+    if(!on){
+      if(!gkey){showKeyCard(true);setStatus('Add your Google AI key first');return;}
+      try{const u0=new SpeechSynthesisUtterance('.');u0.volume=0;speechSynthesis.speak(u0);}catch(e){}
+      stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      ctx=new (window.AudioContext||window.webkitAudioContext)();
+      await ctx.resume();
+      const src=ctx.createMediaStreamSource(stream);
+      proc=ctx.createScriptProcessor(4096,1,1);
+      proc.onaudioprocess=onAudio;
+      src.connect(proc);proc.connect(ctx.destination);
+      on=true;$('btn').textContent='⏹ Stop conversation';$('btn').classList.add('on');
+      calibrating=true;calMs=0;calSum=0;calN=0;busy=false;
+    }else{
+      on=false;busy=false;calibrating=false;
+      proc.disconnect();stream.getTracks().forEach(t=>t.stop());ctx.close();
+      speechSynthesis.cancel();
+      $('btn').textContent='🎤 Start conversation';$('btn').classList.remove('on');
+      setStatus('');$('meter').style.width='0';
+    }
+  }catch(err){setStatus('Error: '+err.message);}
+};
+$('muteMic').onclick=()=>{
+  micMuted=!micMuted;
+  $('muteMic').textContent=micMuted?'🎙 Mic: MUTED':'🎙 Mic: ON';
+  $('muteMic').classList.toggle('off',micMuted);
+  if(micMuted){collecting=false;buf=[];pre=[];speechMs=0;silenceMs=0;if(on)setStatus('🔇 Mic muted');}
+  else if(on&&!busy)setStatus('👂 Listening... just speak');
+};
+$('muteVoice').onclick=()=>{
+  voiceOn=!voiceOn;
+  $('muteVoice').textContent=voiceOn?'🔊 Voice: ON':'🔊 Voice: OFF';
+  $('muteVoice').classList.toggle('off',!voiceOn);
+  if(!voiceOn)speechSynthesis.cancel();
+};
+$('clearChat').onclick=()=>{$('chat').innerHTML='';history=[];votes={me:{male:0,female:0},they:{male:0,female:0}};};
+
+/* =====================  TRANSLATE  ===================== */
+LANGS.forEach(l=>$('trTo').add(new Option(l,l)));
+$('trTo').value=store.get('trTo','Japanese');
+let trLast={t:'',l:'en-US'};
+$('trGo').onclick=async()=>{
+  const text=$('trIn').value.trim();if(!text)return;
+  const to=$('trTo').value,tone=$('trTone').value;store.set('trTo',to);
+  $('trErr').textContent='';$('trGo').disabled=true;$('trGo').textContent='Translating...';
+  try{
+    const prompt=`Translate the text into ${to}. Tone: ${tone==='auto'?'choose the best tone yourself from the text and what it is about':tone}. Translate the meaning and intent, not word for word (slang, idioms and sarcasm must come out as what they mean). Write in the normal native script of ${to}.
+Reply JSON only: detected_language, translation, translation_lang_code (BCP-47), pronunciation (romanization if ${to} uses a non-Latin script, otherwise empty), versions (object with casual, polite, formal: the same meaning in each tone, in ${to}), notes (2 or 3 short English sentences about wording choices, nuance, and when to use each tone).
+Text:
+"""${text}"""`;
+    const j=await gem([{text:prompt}],MODEL_TEXT);
+    trLast={t:j.translation||'',l:CODES[to]||j.translation_lang_code||'en-US'};
+    $('trOut').hidden=false;
+    $('trMain').textContent=trLast.t;
+    $('trPron').textContent=j.pronunciation||'';
+    const v=j.versions||{};
+    $('trVers').innerHTML=['casual','polite','formal'].filter(k=>v[k]).map(k=>'<div class="ver"><span class="tagk">'+k+'</span><span>'+esc(v[k])+'</span><button class="sp" data-t="'+esc(v[k])+'" data-l="'+esc(trLast.l)+'">🔊</button></div>').join('');
+    $('trNotes').textContent=j.notes||'';
+  }catch(e){$('trErr').textContent='Error: '+e.message;}
+  $('trGo').disabled=false;$('trGo').textContent='Translate';
+};
+$('trSpeak').onclick=()=>say(trLast.t,trLast.l);
+$('trCopy').onclick=()=>{try{navigator.clipboard.writeText(trLast.t);$('trCopy').textContent='✓ Copied';setTimeout(()=>$('trCopy').textContent='📋 Copy',1200);}catch(e){}};
+
+/* =====================  LEARN  ===================== */
+LANGS.forEach(l=>{$('lnNative').add(new Option(l,l));$('lnTarget').add(new Option(l,l));});
+$('lnNative').value=store.get('lnNative',hintName()||'English');
+$('lnTarget').value=store.get('lnTarget','Japanese');
+$('lnNative').onchange=()=>store.set('lnNative',$('lnNative').value);
+$('lnTarget').onchange=()=>store.set('lnTarget',$('lnTarget').value);
+$('lnSits').innerHTML=SITS.map(s=>'<span class="chip sit" data-s="'+esc(s)+'">'+esc(s)+'</span>').join('');
+const spBtn=(t,l)=>'<button class="sp" data-t="'+esc(t)+'" data-l="'+esc(l)+'">🔊</button>';
+
+$('lnGo').onclick=async()=>{
+  const text=$('lnIn').value.trim();if(!text)return;
+  const native=$('lnNative').value,target=$('lnTarget').value,lc=CODES[target]||'en-US';
+  $('lnErr').textContent='';$('lnGo').disabled=true;$('lnGo').textContent='Thinking...';
+  try{
+    const prompt=`Teach a ${native} speaker how to say this in ${target}. Write explanations in ${native}. Phrase: "${text}"
+Reply JSON only: phrase (in ${target}, natural and polite by default), pronunciation (romanization), meaning (in ${native}), casual_version (in ${target}), breakdown (array of objects with word, reading, meaning), when_to_use (1 or 2 sentences in ${native} about the situations and politeness level), examples (array of 2 objects with text, pronunciation, meaning).`;
+    const j=await gem([{text:prompt}],MODEL_TEXT);
+    $('lnOut').innerHTML='<div class="card"><div class="big">'+esc(j.phrase)+'</div><div class="small">'+esc(j.pronunciation)+'</div><div class="small2">'+esc(j.meaning)+'</div><div style="margin-top:8px">'+spBtn(j.phrase,lc)+'</div>'
+      +(j.casual_version?'<div class="lbl2">Casual</div><div class="ver"><span>'+esc(j.casual_version)+'</span>'+spBtn(j.casual_version,lc)+'</div>':'')
+      +'<div class="lbl2">Word by word</div>'+(j.breakdown||[]).map(b=>'<div class="ver"><span class="tagk">'+esc(b.word)+'</span><span>'+esc(b.reading||'')+' · '+esc(b.meaning)+'</span></div>').join('')
+      +'<div class="lbl2">When to use it</div><div class="small2">'+esc(j.when_to_use)+'</div>'
+      +'<div class="lbl2">Examples</div>'+(j.examples||[]).map(x=>'<div class="ver"><span>'+esc(x.text)+'<br><span class="small">'+esc(x.pronunciation)+' · '+esc(x.meaning)+'</span></span>'+spBtn(x.text,lc)+'</div>').join('')+'</div>';
+  }catch(e){$('lnErr').textContent='Error: '+e.message;}
+  $('lnGo').disabled=false;$('lnGo').textContent='Teach me';
+};
+
+$('lnSits').onclick=async e=>{
+  const c=e.target.closest('.sit');if(!c)return;
+  const native=$('lnNative').value,target=$('lnTarget').value,lc=CODES[target]||'en-US';
+  $('lnErr').textContent='';$('lnOut').innerHTML='<div class="card small">Preparing phrases...</div>';
+  try{
+    const prompt=`A ${native} speaker living in a ${target}-speaking country needs useful phrases for this situation: ${c.dataset.s}. Give 6 short, practical phrases in ${target}, polite by default, that they would actually say or need to understand. Write meanings in ${native}.
+Reply JSON only: phrases (array of 6 objects with phrase, pronunciation, meaning).`;
+    const j=await gem([{text:prompt}],MODEL_TEXT);
+    $('lnOut').innerHTML='<div class="card"><div class="lbl2" style="margin-top:0">'+esc(c.dataset.s)+'</div>'+(j.phrases||[]).map(x=>'<div class="ver"><span><b>'+esc(x.phrase)+'</b><br><span class="small">'+esc(x.pronunciation)+' · '+esc(x.meaning)+'</span></span>'+spBtn(x.phrase,lc)+'</div>').join('')+'</div>';
+  }catch(err){$('lnOut').innerHTML='';$('lnErr').textContent='Error: '+err.message;}
+};
+</script>
+</body>
+</html>
