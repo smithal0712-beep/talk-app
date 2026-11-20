@@ -14,7 +14,7 @@
   #btn.on{background:#e5484d}
   #muteMic,#muteVoice{background:#2a2a2a;color:#fff;font-size:16px}
   #muteMic.off,#muteVoice.off{background:#7a2a2a}
-  #ping{background:#333;color:#fff;font-size:14px}
+  #ping,#reset{background:#333;color:#fff;font-size:14px}
   #saveKey{background:#4f8cff;color:#fff;font-size:16px}
   #qr{display:inline-block;background:#fff;padding:12px;border-radius:12px;margin:12px}
   #qr:empty{display:none}
@@ -22,25 +22,18 @@
   #meter{height:100%;width:0;background:#3ddc84}
   #dbg,#link{font-size:12px;color:#888;word-break:break-all}
   #conn{font-size:20px;margin:12px 0}
+  #langLine{font-size:16px;color:#3ddc84;margin:8px 0}
+  #style{font-size:15px;color:#f5c04a;margin:4px 0}
   #log{font-size:12px;color:#9ad;text-align:left;max-width:360px;margin:14px auto;white-space:pre-wrap;word-break:break-all}
   p{font-size:18px}
   #out{font-size:28px}
 </style>
 </head>
 <body>
-<h2>Talk <span style="font-size:14px;color:#3ddc84">v7 mute + echo fix</span></h2>
+<h2>Talk <span style="font-size:14px;color:#3ddc84">v9 smart</span></h2>
 
-<div id="hostSetup">
-  <div>I speak: <select id="me"></select></div>
-  <div>Friend speaks: <select id="their"></select></div>
-  <div>Talking to:
-    <select id="who">
-      <option value="a close friend (casual)">Friend</option>
-      <option value="a professor or boss (very polite)">Professor</option>
-      <option value="a shopkeeper or stranger (polite)">Shopkeeper</option>
-    </select>
-  </div>
-  <div><input id="gkey" type="password" placeholder="Google AI key"><button id="saveKey">Save</button></div>
+<div id="keyRow">
+  <input id="gkey" type="password" placeholder="Google AI key"><button id="saveKey">Save</button>
   <div id="keyMsg" style="font-size:14px;color:#888"></div>
 </div>
 
@@ -49,6 +42,7 @@
 <p id="link"></p>
 
 <div id="talkBox" style="display:none">
+  <div id="langLine">You: detecting...  ·  They: detecting...</div>
   <div>Sound: <select id="outMode">
     <option value="speaker">🔈 Loudspeaker</option>
     <option value="phones">🎧 Earphones</option>
@@ -62,7 +56,9 @@
   <p id="heard"></p>
   <p id="out"></p>
   <p id="emo"></p>
+  <p id="style"></p>
   <p id="time" style="color:#888"></p>
+  <button id="reset">🔄 Reset languages</button>
   <button id="ping">📡 Test link</button>
 </div>
 <div id="log"></div>
@@ -72,11 +68,25 @@ const SUPABASE_URL = 'https://jxtrjjsnyoyrvktjebbx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_MKpbfMzNoDUJc1iwXUA0fw_yHhZxKH3';
 const MODEL = 'gemini-flash-lite-latest';
 const PAUSE_MS = 900, MIN_SPEECH_MS = 200, MAX_SEC = 15;
-const LANGS = ['English','Telugu','Hindi','Tamil','Japanese','Korean','Chinese','Spanish','French'];
+const DEFAULT_OTHER = 'Japanese';
+const CODES = {English:'en-US',Japanese:'ja-JP',Telugu:'te-IN',Hindi:'hi-IN',Tamil:'ta-IN',Korean:'ko-KR',Chinese:'zh-CN',Spanish:'es-ES',French:'fr-FR',German:'de-DE',Portuguese:'pt-BR',Arabic:'ar-SA'};
+const LANGS = Object.keys(CODES);
+const PREFIX = {en:'English',ja:'Japanese',te:'Telugu',hi:'Hindi',ta:'Tamil',ko:'Korean',zh:'Chinese',es:'Spanish',fr:'French',de:'German',pt:'Portuguese',ar:'Arabic'};
+const MALE = ['otoya','ichiro','takumi','hattori','daniel','alex','aaron','fred','arthur','rishi','david','mark','ravi','hemant','kangkang','jorge','juan','thomas','markus','mohan','valluvar','guy','james','george','ryan','liam'];
+const FEMALE = ['kyoko','o-ren','haruka','ayumi','sayaka','nanami','samantha','karen','moira','tessa','nicky','veena','zira','heera','lekha','shruti','pallavi','yuna','heami','tingting','meijia','yaoyao','huihui','monica','paulina','amelie','audrey','anna','petra','susan','hazel','jenny','aria'];
 const $ = id => document.getElementById(id);
 const est = t => Math.min(12000, 1500 + (t||'').length*140);
 
-let holdUntil = 0, micMuted = false, voiceOn = true;
+function hintName(){ return PREFIX[(navigator.language||'').slice(0,2).toLowerCase()] || null; }
+function same(a,b){
+  a = (a||'').toLowerCase(); b = (b||'').toLowerCase();
+  return !!a && !!b && (a.includes(b) || b.includes(a));
+}
+function canon(n){ n = n||''; return LANGS.find(l => same(l,n)) || n; }
+
+let holdUntil = 0, micMuted = false, voiceOn = true, isConnected = false;
+let langs = {host:null, guest:null}, hints = {host:null, guest:null};
+let history = [], votes = {host:{male:0,female:0}, guest:{male:0,female:0}};
 let ctx=null, stream=null, proc=null, on=false, busy=false, speaking=false;
 let collecting=false, buf=[], pre=[], silenceMs=0, speechMs=0;
 let calibrating=false, calMs=0, calSum=0, calN=0, thr=0.012;
@@ -95,11 +105,10 @@ const isGuest = !!room;
 if(!room) room = Math.random().toString(36).slice(2,8);
 const myRole = isGuest ? 'guest' : 'host';
 const myId = Math.random().toString(36).slice(2,8);
+hints[myRole] = hintName();
 log('I am the ' + myRole);
-
-LANGS.forEach(l => { $('me').add(new Option(l,l)); $('their').add(new Option(l,l)); });
-$('me').value = 'English'; $('their').value = 'Japanese';
-if(isGuest) $('hostSetup').style.display = 'none';
+try{ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => {}; }catch(e){}
+if(isGuest) $('keyRow').style.display = 'none';
 
 let gkey = '';
 try{ gkey = localStorage.getItem('gkey') || ''; }catch(e){}
@@ -110,20 +119,36 @@ $('saveKey').onclick = () => {
   $('keyMsg').textContent = gkey ? 'Key saved ✓' : 'No key';
 };
 
-function setTheirLang(name){
-  if(!name) return;
-  const s = $('their');
-  if(![...s.options].some(o => o.value === name)) s.add(new Option(name,name));
-  s.value = name;
-}
 function setStatus(t){ $('status').textContent = t; }
+
+function renderLangs(l){
+  const mine = isGuest ? l.guest : l.host;
+  const theirs = isGuest ? l.host : l.guest;
+  $('langLine').textContent = 'You: ' + (mine || 'detecting...') + '  ·  They: ' + (theirs || 'detecting...');
+}
+function updateLangs(){
+  renderLangs(langs);
+  if(!isGuest && isConnected) send({type:'langs', host:langs.host, guest:langs.guest});
+}
+function resetState(){
+  langs = {host:null, guest:null};
+  history = [];
+  votes = {host:{male:0,female:0}, guest:{male:0,female:0}};
+  updateLangs();
+}
+function targetFor(S){
+  const other = S === 'host' ? 'guest' : 'host';
+  if(langs[other]) return langs[other];
+  const mine = langs[S] || hints[S];
+  if(hints[other] && hints[other] !== mine) return hints[other];
+  return S === 'host' ? DEFAULT_OTHER : 'English';
+}
 
 /* ---------- relay ---------- */
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const ch = sb.channel('room-' + room, {config:{broadcast:{self:false}}});
 function send(p){ return ch.send({type:'broadcast', event:'msg', payload:Object.assign({from:myId}, p)}); }
 
-let isConnected = false;
 function connected(){
   if(isConnected) return;
   isConnected = true;
@@ -138,8 +163,15 @@ ch.on('broadcast', {event:'msg'}, ({payload}) => {
   if(payload.from === myId) return;
   if(payload.type !== 'audio' && payload.type !== 'hold') log('got ' + payload.type);
   try{
-    if(payload.type === 'join' && !isGuest){ connected(); send({type:'welcome'}); }
+    if(payload.type === 'join' && !isGuest){
+      hints.guest = payload.hint || null;
+      connected();
+      send({type:'welcome'});
+      updateLangs();
+    }
     else if(payload.type === 'welcome' && isGuest){ connected(); }
+    else if(payload.type === 'langs'){ renderLangs({host:payload.host, guest:payload.guest}); }
+    else if(payload.type === 'reset' && !isGuest){ resetState(); }
     else if(payload.type === 'ping'){ send({type:'pong'}); }
     else if(payload.type === 'pong'){ log('✅ link works both ways'); }
     else if(payload.type === 'hold'){
@@ -150,15 +182,17 @@ ch.on('broadcast', {event:'msg'}, ({payload}) => {
       if(!m.parts[payload.i]){ m.parts[payload.i] = payload.data; m.got++; }
       if(m.got === m.n){
         const data = m.parts.join(''); delete inbox[payload.id];
-        log('audio from phone complete, translating');
+        log('audio from phone complete');
         handleAudio(data, 'guest');
       }
     }
     else if(payload.type === 'result' && isGuest){
       showResult(payload);
       if(payload.speaker === 'host'){
-        if(on) speak(payload.translation, payload.lang);
-        else log('result shown, tap Start conversation to hear it');
+        if(payload.accepted){
+          if(on) speak(payload.translation, payload.lang, payload);
+          else log('result shown, tap Start conversation to hear it');
+        }
       } else { turnCounter++; resumeListening(); }
     }
     else if(payload.type === 'error' && isGuest){
@@ -174,7 +208,7 @@ ch.subscribe(s => {
   if(s === 'SUBSCRIBED'){
     if(isGuest){
       $('conn').textContent = 'Connecting...';
-      send({type:'join'});
+      send({type:'join', hint:hints.guest});
       setTimeout(() => { if(!isConnected) $('conn').textContent = 'Still trying... is the laptop page open?'; }, 8000);
     } else {
       $('conn').textContent = "Scan this with your friend's phone camera";
@@ -188,6 +222,10 @@ ch.subscribe(s => {
 });
 
 $('ping').onclick = () => { log('sending test...'); send({type:'ping'}).then(r => log('test send: ' + r)); };
+$('reset').onclick = () => {
+  if(isGuest) send({type:'reset'}); else resetState();
+  log('languages reset');
+};
 
 /* ---------- mute buttons ---------- */
 $('muteMic').onclick = () => {
@@ -230,16 +268,33 @@ async function sendAudio(data){
 }
 
 /* ---------- translation (runs on the laptop / host only) ---------- */
-async function translate(data, speaker){
+async function translate(data, S, target, provisional){
   if(!gkey) throw new Error('Paste your Google AI key first and tap Save');
-  const me = $('me').value, who = $('who').value;
-  let prompt;
-  if(speaker === 'host'){
-    const target = $('their').value || 'Japanese';
-    prompt = `Live interpreter. The speaker speaks ${me} and is talking to ${who}. Translate what they say into ${target}, using the matching politeness level. Keep the speaker's emotion in wording and punctuation. Reply JSON only: heard, detected_language (English name of the language), translation, translation_lang_code (BCP-47 like ja-JP), emotion (one word).`;
-  } else {
-    prompt = `Live interpreter. The speaker is the user's friend and can speak ANY language. Detect the language, then translate what they say into ${me}. Keep the speaker's emotion in wording and punctuation. Reply JSON only: heard, detected_language (English name of the language, like French), translation, translation_lang_code (BCP-47 code of ${me}), emotion (one word).`;
-  }
+  const who = S === 'host' ? 'A' : 'B';
+  const known = langs[S];
+  const talk = history.map(h => (h.who === 'host' ? 'A' : 'B') + ': ' + h.heard).join('\n') || '(this is the start)';
+  const alt = same(target, 'English') ? 'Japanese' : 'English';
+  const r1 = known
+    ? `Person ${who} speaks ${known}. If the audio is silence, noise, or mainly in a different language, set accepted to false and leave the other fields empty.`
+    : `If the audio is silence or noise, set accepted to false and leave the other fields empty.`;
+  const r2 = provisional
+    ? `The listener language is only a guess. If the audio is already in ${target}, translate it into ${alt} instead.`
+    : `Always translate into ${target}.`;
+  const prompt = `You are a live interpreter for two people talking face to face. Person A speaks ${langs.host || 'a language not known yet'}. Person B speaks ${langs.guest || 'a language not known yet'}.
+You hear Person ${who}. Translate for the other person into ${target}.
+
+Rules:
+1. ${r1}
+2. ${r2}
+3. Translate the meaning and intent, not word for word. Slang, idioms, jokes and sarcasm must come out as what they mean in this situation. Example: "You are killing it, brother" is praise, so say that they are doing great, never anything about killing. Use the conversation so far to understand what words refer to.
+4. Choose the politeness yourself. Judge from how the speaker talks (casual or formal words, tone), what they talk about, and the relationship you can infer (friends, teacher and student, boss and employee, customer and shopkeeper, strangers). When unsure, be polite but friendly. In languages with politeness levels, such as Japanese and Korean, use the level a native speaker would use in that exact relationship. Match the vocabulary level of the speaker: simple words for simple speech, richer words for educated speech.
+5. Keep the emotion: show it in wording and punctuation.
+6. Judge the speaker from the voice: speaker_gender is male or female, energy is low, medium or high.
+
+Conversation so far:
+${talk}
+
+Reply with JSON only: accepted (true or false), heard, detected_language (English name), translated_into (English name), translation, translation_lang_code (BCP-47), emotion (one or two words), energy, speaker_gender, register (one or two words like casual, polite, very formal), relationship (one or two words like friends, strangers).`;
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent?key=' + gkey, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -255,34 +310,75 @@ async function translate(data, speaker){
   return j;
 }
 
-async function handleAudio(data, speaker){
-  if(speaker === 'guest'){ busy = true; setStatus('Thinking...'); }
+async function handleAudio(data, S){
+  const other = S === 'host' ? 'guest' : 'host';
+  const hostSpeaking = S === 'host';
+  if(!hostSpeaking){ busy = true; setStatus('Thinking...'); }
   const t0 = performance.now();
   try{
-    const j = await translate(data, speaker);
-    if(speaker === 'guest' && j.detected_language !== $('me').value) setTheirLang(j.detected_language);
-    const res = {type:'result', speaker, heard:j.heard, translation:j.translation,
-                 lang:j.translation_lang_code, emotion:j.emotion, detected:j.detected_language};
+    const target = targetFor(S);
+    const provisional = !langs[other];
+    const j = await translate(data, S, target, provisional);
+    const detected = canon(j.detected_language);
+    let ok = (j.accepted === true || j.accepted === 'true');
+    if(ok && langs[S] && !same(detected, langs[S])) ok = false;
+    if(ok && !langs[S] && detected){ langs[S] = detected; updateLangs(); }
+    let gender = '';
+    if(ok){
+      const g = (j.speaker_gender || '').toLowerCase();
+      if(g === 'male' || g === 'female') votes[S][g]++;
+      const v = votes[S];
+      gender = v.male === v.female ? '' : (v.male > v.female ? 'male' : 'female');
+      history.push({who:S, heard:j.heard||'', translation:j.translation||''});
+      if(history.length > 8) history.shift();
+    }
+    const into = canon(j.translated_into || target);
+    const res = {type:'result', speaker:S, accepted:ok, speakerLang:langs[S]||'',
+                 heard:j.heard||'', translation:j.translation||'',
+                 lang:CODES[into] || j.translation_lang_code || 'en-US',
+                 emotion:j.emotion||'', energy:(j.energy||'medium').toLowerCase(), gender,
+                 register:j.register||'', relationship:j.relationship||'', detected:detected||''};
     showResult(res);
     $('time').textContent = 'AI took ' + ((performance.now()-t0)/1000).toFixed(1) + ' seconds';
     send(res);
-    if(speaker === 'guest'){ if(on) speak(j.translation, j.translation_lang_code); else busy = false; }
+    if(hostSpeaking) resumeListening();
+    else if(ok && on) speak(res.translation, res.lang, res);
     else resumeListening();
   }catch(err){
     setStatus('Error: ' + err.message);
     log('ERR ' + err.message);
-    send({type:'error', text:err.message});
+    if(!hostSpeaking) send({type:'error', text:err.message});
     setTimeout(resumeListening, 2500);
   }
 }
 
 function showResult(r){
+  if(!r.accepted){
+    if(r.speaker === myRole){
+      setStatus(r.speakerLang ? '🚫 Ignored: not ' + r.speakerLang : '🚫 Ignored (no clear speech)');
+      $('heard').textContent = ''; $('out').textContent = ''; $('emo').textContent = ''; $('style').textContent = '';
+    }
+    return;
+  }
   $('heard').textContent = (r.speaker === myRole ? 'You said' : 'They said') + ' (' + r.detected + '): ' + r.heard;
   $('out').textContent = r.translation;
   $('emo').textContent = 'Feeling: ' + r.emotion;
+  $('style').textContent = 'Style: ' + (r.register || '?') + (r.relationship ? ' · ' + r.relationship : '');
 }
 
-function speak(text, lang){
+/* ---------- voice: male / female matching ---------- */
+function pickVoice(lang, gender){
+  const vs = speechSynthesis.getVoices();
+  const pre2 = (lang || 'en').slice(0,2).toLowerCase();
+  const sameLang = vs.filter(v => (v.lang || '').toLowerCase().replace('_','-').startsWith(pre2));
+  const has = (v, list) => list.some(n => v.name.toLowerCase().includes(n));
+  let v = null;
+  if(gender === 'male') v = sameLang.find(x => has(x, MALE));
+  if(gender === 'female') v = sameLang.find(x => has(x, FEMALE));
+  return {voice: v || sameLang.find(x => x.default) || sameLang[0] || null, matched: !!v};
+}
+
+function speak(text, lang, info){
   if(!voiceOn){ resumeListening(); return; }
   const loud = $('outMode').value === 'speaker';
   busy = true; speaking = true;
@@ -290,16 +386,27 @@ function speak(text, lang){
   if(loud) send({type:'hold', ms: est(text)});
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang || 'en-US';
+  const gender = info && info.gender;
+  const pick = pickVoice(u.lang, gender);
+  if(pick.voice){ u.voice = pick.voice; u.lang = pick.voice.lang || u.lang; }
+  let pitch = 1, rate = 1;
+  if(gender && !pick.matched) pitch = gender === 'male' ? 0.8 : 1.15;
+  if(info && info.energy === 'high'){ rate = 1.08; pitch += 0.08; }
+  else if(info && info.energy === 'low'){ rate = 0.92; pitch -= 0.08; }
+  u.pitch = Math.max(0.5, Math.min(1.8, pitch));
+  u.rate = rate;
+  log('voice: ' + (pick.voice ? pick.voice.name : 'default') + ' / ' + (gender || '?'));
   const done = () => setTimeout(resumeListening, loud ? 700 : 100);
   u.onend = done;
-  u.onerror = e => { log('voice error: ' + (e.error||'unknown')); done(); };
+  u.onerror = e => { log('voice error: ' + (e.error || 'unknown')); done(); };
   speechSynthesis.speak(u);
 }
 
 /* ---------- microphone, hands-free ---------- */
 function resumeListening(){
   collecting=false; buf=[]; pre=[]; silenceMs=0; speechMs=0; busy=false; speaking=false;
-  if(on) setStatus(micMuted ? '🔇 Mic muted' : '👂 Listening... just speak');
+  if(on && !String($('status').textContent).startsWith('🚫')) setStatus(micMuted ? '🔇 Mic muted' : '👂 Listening... just speak');
+  else if(on) setTimeout(() => { if(!busy && !collecting) setStatus(micMuted ? '🔇 Mic muted' : '👂 Listening... just speak'); }, 2000);
 }
 
 async function finish(){
@@ -380,6 +487,8 @@ $('btn').onclick = async () => {
     }
   }catch(err){ setStatus('Error: ' + err.message); log('ERR ' + err.message); }
 };
+
+renderLangs(langs);
 </script>
 </body>
 </html>
