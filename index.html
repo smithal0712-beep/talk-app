@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  body{font-family:sans-serif;text-align:center;padding:24px;background:#111;color:#fff}
+  #qr{display:inline-block;background:#fff;padding:12px;border-radius:12px;margin:12px}
+  #qr:empty{display:none}
+  button{font-size:20px;padding:14px 28px;border:0;border-radius:30px;background:#4f8cff;color:#fff;margin-top:12px}
+  #status{font-size:22px;margin:12px 0}
+  #link{font-size:12px;color:#888;word-break:break-all}
+  #log{font-size:20px}
+</style>
+</head>
+<body>
+<h2>Connect <span style="font-size:14px;color:#3ddc84">v1</span></h2>
+<div id="status">Starting...</div>
+<div id="qr"></div>
+<p id="link"></p>
+<button id="hi" style="display:none">👋 Send hello</button>
+<p id="log"></p>
+
+<script>
+const params = new URLSearchParams(location.search);
+const joinId = params.get('join');
+const status = document.getElementById('status'), log = document.getElementById('log');
+let conn = null;
+
+function connected(c){
+  conn = c;
+  status.textContent = '✅ Connected!';
+  document.getElementById('qr').innerHTML = '';
+  document.getElementById('link').textContent = '';
+  document.getElementById('hi').style.display = 'inline-block';
+  try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
+  c.on('data', d => {
+    log.textContent = 'Received: ' + d;
+    try{ navigator.vibrate && navigator.vibrate(100); }catch(e){}
+  });
+  c.on('close', () => { status.textContent = 'Disconnected'; });
+}
+
+const peer = new Peer();
+peer.on('error', e => { status.textContent = 'Error: ' + e.type; });
+peer.on('open', id => {
+  if(joinId){
+    status.textContent = 'Connecting...';
+    const c = peer.connect(joinId);
+    c.on('open', () => connected(c));
+  } else {
+    status.textContent = "Scan this with your friend's phone camera";
+    const url = location.origin + location.pathname + '?join=' + id;
+    new QRCode(document.getElementById('qr'), {text: url, width: 220, height: 220});
+    document.getElementById('link').textContent = url;
+  }
+});
+peer.on('connection', c => c.on('open', () => connected(c)));
+
+document.getElementById('hi').onclick = () => {
+  if(conn) conn.send('Hello 👋 from ' + (joinId ? 'guest' : 'host'));
+};
+</script>
+</body>
+</html>
